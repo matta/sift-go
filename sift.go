@@ -1,8 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"log"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
@@ -26,9 +29,9 @@ type addItemMessage struct {
 }
 
 type model struct {
-	items    []todo
-	cursor   int
-	selected map[int]struct{}
+	Items    []todo
+	Cursor   int
+	Selected map[int]struct{}
 }
 
 func (m model) Init() tea.Cmd {
@@ -42,32 +45,34 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c", "q":
 			return m, tea.Quit
 		case "up", "p", "k":
-			if m.cursor > 0 {
-				m.cursor--
+			if m.Cursor > 0 {
+				m.Cursor--
 			}
 		case "down", "n", "j":
-			if m.cursor < len(m.items)-1 {
-				m.cursor++
+			if m.Cursor < len(m.Items)-1 {
+				m.Cursor++
 			}
 		case "enter", " ":
-			m.items[m.cursor].Done = !m.items[m.cursor].Done
+			m.Items[m.Cursor].Done = !m.Items[m.Cursor].Done
+		case "a":
+			m.Items = append(m.Items, todo{Title: ""})
 		}
 	case addItemMessage:
-		m.items = append(m.items, todo{Title: msg.Title})
+		m.Items = append(m.Items, todo{Title: msg.Title})
 	}
 	return m, nil
 }
 
 func (m model) View() string {
 	s := ""
-	for i, item := range m.items {
+	for i, item := range m.Items {
 		cursor := " "
-		if i == m.cursor {
+		if i == m.Cursor {
 			cursor = ">"
 		}
 
 		done := " "
-		if m.items[i].Done {
+		if m.Items[i].Done {
 			done = "x"
 		}
 
@@ -78,15 +83,63 @@ func (m model) View() string {
 	return s
 }
 
-func main() {
-	initialModel := model{
-		items:    samples(),
-		selected: make(map[int]struct{}),
+func UserHomeDir() string {
+	usr, err := os.UserHomeDir()
+	if err != nil {
+		log.Fatal(err)
+	}
+	return usr
+}
+
+func UserDataFile() string {
+	return filepath.Join(UserHomeDir(), ".sift.json")
+}
+
+func (m model) Save() error {
+	b, err := json.Marshal(m)
+	if err != nil {
+		return fmt.Errorf("failed to marshal model: %w", err)
+	}
+	err = os.WriteFile(UserDataFile(), b, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to save model: %w", err)
+	}
+	return nil
+}
+
+func InitialModel() model {
+	return model{
+		Items:    samples(),
+		Selected: make(map[int]struct{}),
+	}
+}
+
+func LoadModel() model {
+	b, err := os.ReadFile(UserDataFile())
+	if err != nil {
+		log.Printf("Failed to read model file: %v", err)
+		return InitialModel()
 	}
 
-	p := tea.NewProgram(initialModel)
-	if _, err := p.Run(); err != nil {
+	var m model
+	err = json.Unmarshal(b, &m)
+	if err != nil {
+		log.Printf("Failed to unmarshal model file: %v", err)
+		return InitialModel()
+	}
+
+	return m
+}
+
+func main() {
+	p := tea.NewProgram(LoadModel())
+	m, err := p.Run()
+	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
+	}
+	finalModel := m.(model)
+	if err := finalModel.Save(); err != nil {
+		panic(err)
 	}
 }
