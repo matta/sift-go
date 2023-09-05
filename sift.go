@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/charmbracelet/bubbles/help"
+	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 )
 
@@ -28,10 +30,69 @@ type addItemMessage struct {
 	Title string
 }
 
-type model struct {
+// keyMap holds a set of keybindings. To work for help it must satisfy
+// key.Map. It could also very easily be a map[string]key.Binding.
+type keyMap struct {
+	Up     key.Binding
+	Down   key.Binding
+	Toggle key.Binding
+	Add    key.Binding
+	Help   key.Binding
+	Quit   key.Binding
+}
+
+// ShortHelp returns keybindings to be shown in the mini help view. It's part
+// of the key.Map interface.
+func (k keyMap) ShortHelp() []key.Binding {
+	return []key.Binding{k.Help, k.Quit}
+}
+
+// FullHelp returns keybindings for the expanded help view. It's part of the
+// key.Map interface.
+func (k keyMap) FullHelp() [][]key.Binding {
+	return [][]key.Binding{
+		{k.Up, k.Down, k.Toggle, k.Add}, // first column
+		{k.Help, k.Quit},                // second column
+	}
+}
+
+var keys = keyMap{
+	Up: key.NewBinding(
+		key.WithKeys("up", "k"),
+		key.WithHelp("↑/k", "move up"),
+	),
+	Down: key.NewBinding(
+		key.WithKeys("down", "j"),
+		key.WithHelp("↓/j", "move down"),
+	),
+	Toggle: key.NewBinding(
+		key.WithKeys("x"),
+		key.WithHelp("x", "toggle item"),
+	),
+	Add: key.NewBinding(
+		key.WithKeys("a"),
+		key.WithHelp("a", "add item"),
+	),
+	Help: key.NewBinding(
+		key.WithKeys("?"),
+		key.WithHelp("?", "toggle help"),
+	),
+	Quit: key.NewBinding(
+		key.WithKeys("q", "esc", "ctrl+c"),
+		key.WithHelp("q", "quit"),
+	),
+}
+
+type persistedModel struct {
 	Items    []todo
 	Cursor   int
 	Selected map[int]struct{}
+}
+
+type model struct {
+	keys      keyMap
+	help      help.Model
+	persisted persistedModel
 }
 
 func (m model) Init() tea.Cmd {
@@ -40,47 +101,53 @@ func (m model) Init() tea.Cmd {
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		// If we set a width on the help menu it can gracefully truncate
+		// its view as needed.
+		m.help.Width = msg.Width
 	case tea.KeyMsg:
-		switch msg.String() {
-		case "ctrl+c", "q":
+		switch {
+		case key.Matches(msg, m.keys.Help):
+			m.help.ShowAll = !m.help.ShowAll
+		case key.Matches(msg, m.keys.Quit):
 			return m, tea.Quit
-		case "up", "p", "k":
-			if m.Cursor > 0 {
-				m.Cursor--
+		case key.Matches(msg, m.keys.Up):
+			if m.persisted.Cursor > 0 {
+				m.persisted.Cursor--
 			}
-		case "down", "n", "j":
-			if m.Cursor < len(m.Items)-1 {
-				m.Cursor++
+		case key.Matches(msg, m.keys.Down):
+			if m.persisted.Cursor < len(m.persisted.Items)-1 {
+				m.persisted.Cursor++
 			}
-		case "enter", " ":
-			m.Items[m.Cursor].Done = !m.Items[m.Cursor].Done
-		case "a":
-			m.Items = append(m.Items, todo{Title: ""})
+		case key.Matches(msg, m.keys.Toggle):
+			m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
+		case key.Matches(msg, m.keys.Add):
+			m.persisted.Items = append(m.persisted.Items, todo{Title: ""})
 		}
 	case addItemMessage:
-		m.Items = append(m.Items, todo{Title: msg.Title})
+		m.persisted.Items = append(m.persisted.Items, todo{Title: msg.Title})
 	}
 	return m, nil
 }
 
 func (m model) View() string {
 	s := ""
-	for i, item := range m.Items {
+	for i, item := range m.persisted.Items {
 		cursor := " "
-		if i == m.Cursor {
+		if i == m.persisted.Cursor {
 			cursor = ">"
 		}
 
 		done := " "
-		if m.Items[i].Done {
+		if m.persisted.Items[i].Done {
 			done = "x"
 		}
 
 		s += fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title)
 	}
 
-	s += "\nPress q to quit.\n"
-	return s
+	helpView := m.help.View(m.keys)
+	return s + "\n" + helpView
 }
 
 func UserHomeDir() string {
@@ -96,7 +163,7 @@ func UserDataFile() string {
 }
 
 func (m model) Save() error {
-	b, err := json.Marshal(m)
+	b, err := json.Marshal(m.persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
@@ -109,25 +176,32 @@ func (m model) Save() error {
 
 func InitialModel() model {
 	return model{
-		Items:    samples(),
-		Selected: make(map[int]struct{}),
+		keys: keys,
+		help: help.New(),
+		persisted: persistedModel{
+			Items:    samples(),
+			Selected: make(map[int]struct{}),
+		},
 	}
 }
 
 func LoadModel() model {
+	m := InitialModel()
+
 	b, err := os.ReadFile(UserDataFile())
 	if err != nil {
 		log.Printf("Failed to read model file: %v", err)
-		return InitialModel()
+		return m
 	}
 
-	var m model
-	err = json.Unmarshal(b, &m)
+	var p persistedModel
+	err = json.Unmarshal(b, &p)
 	if err != nil {
 		log.Printf("Failed to unmarshal model file: %v", err)
-		return InitialModel()
+		return m
 	}
 
+	m.persisted = p
 	return m
 }
 
