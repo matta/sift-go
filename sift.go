@@ -7,9 +7,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
+	"github.com/gdamore/tcell/v2"
 )
 
 type todo struct {
@@ -26,63 +24,6 @@ func samples() []todo {
 	}
 }
 
-type addItemMessage struct {
-	Title string
-}
-
-// keyMap holds a set of keybindings. To work for help it must satisfy
-// key.Map. It could also very easily be a map[string]key.Binding.
-type keyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Toggle key.Binding
-	Add    key.Binding
-	Help   key.Binding
-	Quit   key.Binding
-}
-
-// ShortHelp returns keybindings to be shown in the mini help view. It's part
-// of the key.Map interface.
-func (k keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Help, k.Quit}
-}
-
-// FullHelp returns keybindings for the expanded help view. It's part of the
-// key.Map interface.
-func (k keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Up, k.Down, k.Toggle, k.Add}, // first column
-		{k.Help, k.Quit},                // second column
-	}
-}
-
-var keys = keyMap{
-	Up: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "move up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "move down"),
-	),
-	Toggle: key.NewBinding(
-		key.WithKeys("x"),
-		key.WithHelp("x", "toggle item"),
-	),
-	Add: key.NewBinding(
-		key.WithKeys("a"),
-		key.WithHelp("a", "add item"),
-	),
-	Help: key.NewBinding(
-		key.WithKeys("?"),
-		key.WithHelp("?", "toggle help"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("q", "esc", "ctrl+c"),
-		key.WithHelp("q", "quit"),
-	),
-}
-
 type persistedModel struct {
 	Items    []todo
 	Cursor   int
@@ -90,48 +31,50 @@ type persistedModel struct {
 }
 
 type model struct {
-	keys      keyMap
-	help      help.Model
 	persisted persistedModel
+	quit bool
 }
 
-func (m model) Init() tea.Cmd {
-	return nil
-}
-
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		// If we set a width on the help menu it can gracefully truncate
-		// its view as needed.
-		m.help.Width = msg.Width
-	case tea.KeyMsg:
+func (m* model) Update(screen tcell.Screen, event tcell.Event) {
+	switch event := event.(type) {
+	case *tcell.EventKey:
 		switch {
-		case key.Matches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
-		case key.Matches(msg, m.keys.Up):
+		case event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlC:
+			m.quit = true
+		case event.Key() == tcell.KeyRune && event.Rune() == 'k':
 			if m.persisted.Cursor > 0 {
 				m.persisted.Cursor--
 			}
-		case key.Matches(msg, m.keys.Down):
+		case event.Key() == tcell.KeyRune && event.Rune() == 'j':
 			if m.persisted.Cursor < len(m.persisted.Items)-1 {
 				m.persisted.Cursor++
 			}
-		case key.Matches(msg, m.keys.Toggle):
+		case event.Key() == tcell.KeyRune && event.Rune() == 'x':
 			m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
-		case key.Matches(msg, m.keys.Add):
+		case event.Key() == tcell.KeyRune && event.Rune() == 'a':
 			m.persisted.Items = append(m.persisted.Items, todo{Title: ""})
 		}
-	case addItemMessage:
-		m.persisted.Items = append(m.persisted.Items, todo{Title: msg.Title})
 	}
-	return m, nil
 }
 
-func (m model) View() string {
-	s := ""
+func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
+	row := y1
+	col := x1
+	for _, r := range text {
+		s.SetContent(col, row, r, nil, style)
+		col++
+		if col >= x2 {
+			row++
+			col = x1
+		}
+		if row > y2 {
+			break
+		}
+	}
+}
+
+func (m* model) Draw(s tcell.Screen) {
+	style := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
 	for i, item := range m.persisted.Items {
 		cursor := " "
 		if i == m.persisted.Cursor {
@@ -143,11 +86,9 @@ func (m model) View() string {
 			done = "x"
 		}
 
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title)
+		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title)
+		drawText(s, 0, i, 20, i, style, line)
 	}
-
-	helpView := m.help.View(m.keys)
-	return s + "\n" + helpView
 }
 
 func UserHomeDir() string {
@@ -176,8 +117,6 @@ func (m model) Save() error {
 
 func InitialModel() model {
 	return model{
-		keys: keys,
-		help: help.New(),
 		persisted: persistedModel{
 			Items:    samples(),
 			Selected: make(map[int]struct{}),
@@ -206,14 +145,46 @@ func LoadModel() model {
 }
 
 func main() {
-	p := tea.NewProgram(LoadModel())
-	m, err := p.Run()
+	model := LoadModel()
+
+	s, err := tcell.NewScreen()
 	if err != nil {
-		fmt.Printf("Error running program: %v\n", err)
-		os.Exit(1)
+		log.Fatal(err)
 	}
-	finalModel := m.(model)
-	if err := finalModel.Save(); err != nil {
+	if err := s.Init(); err != nil {
+		log.Fatal(err)
+	}
+
+	// Set default text style
+	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
+	s.SetStyle(defStyle)
+
+	s.Clear()
+
+	wantSync := false
+	for !model.quit {
+		// Update screen
+		model.Draw(s)
+		if wantSync {
+			s.Sync()
+			wantSync = false
+		} else {
+			s.Show()
+		}
+
+		// Poll event
+		ev := s.PollEvent()
+
+		// Process event
+		switch ev.(type) {
+		case *tcell.EventResize:
+			wantSync = true
+		}
+		model.Update(s, ev)
+	}
+	s.Fini()
+	if err := model.Save(); err != nil {
 		panic(err)
 	}
+	os.Exit(0)
 }
