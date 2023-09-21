@@ -1,13 +1,13 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
 
 	"github.com/gdamore/tcell/v2"
+	"github.com/ghodss/yaml"
 )
 
 type todo struct {
@@ -32,14 +32,16 @@ type persistedModel struct {
 
 type model struct {
 	persisted persistedModel
-	quit bool
+	quit      bool
 }
 
-func (m* model) Update(screen tcell.Screen, event tcell.Event) {
+func (m *model) Update(screen tcell.Screen, event tcell.Event) {
 	switch event := event.(type) {
 	case *tcell.EventKey:
 		switch {
-		case event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlC:
+		case event.Key() == tcell.KeyEscape ||
+			event.Key() == tcell.KeyCtrlC ||
+			(event.Key() == tcell.KeyRune && event.Rune() == 'q'):
 			m.quit = true
 		case event.Key() == tcell.KeyRune && event.Rune() == 'k':
 			if m.persisted.Cursor > 0 {
@@ -73,7 +75,7 @@ func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string
 	}
 }
 
-func (m* model) Draw(s tcell.Screen) {
+func (m *model) Draw(s tcell.Screen) {
 	style := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
 	for i, item := range m.persisted.Items {
 		cursor := " "
@@ -100,11 +102,11 @@ func UserHomeDir() string {
 }
 
 func UserDataFile() string {
-	return filepath.Join(UserHomeDir(), ".sift.json")
+	return filepath.Join(UserHomeDir(), ".sift.yaml")
 }
 
 func (m model) Save() error {
-	b, err := json.Marshal(m.persisted)
+	b, err := yaml.Marshal(m.persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
@@ -134,7 +136,7 @@ func LoadModel() model {
 	}
 
 	var p persistedModel
-	err = json.Unmarshal(b, &p)
+	err = yaml.Unmarshal(b, &p)
 	if err != nil {
 		log.Printf("Failed to unmarshal model file: %v", err)
 		return m
