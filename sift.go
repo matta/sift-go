@@ -10,6 +10,22 @@ import (
 	"github.com/ghodss/yaml"
 )
 
+func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
+	row := y1
+	col := x1
+	for _, r := range text {
+		s.SetContent(col, row, r, nil, style)
+		col++
+		if col >= x2 {
+			row++
+			col = x1
+		}
+		if row > y2 {
+			break
+		}
+	}
+}
+
 type todo struct {
 	Title string
 	Done  bool
@@ -30,12 +46,12 @@ type persistedModel struct {
 	Selected map[int]struct{}
 }
 
-type model struct {
+type listModel struct {
 	persisted persistedModel
 	quit      bool
 }
 
-func (m *model) Update(screen tcell.Screen, event tcell.Event) {
+func (m *listModel) Update(screen tcell.Screen, event tcell.Event) {
 	switch event := event.(type) {
 	case *tcell.EventKey:
 		switch {
@@ -59,23 +75,7 @@ func (m *model) Update(screen tcell.Screen, event tcell.Event) {
 	}
 }
 
-func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
-	row := y1
-	col := x1
-	for _, r := range text {
-		s.SetContent(col, row, r, nil, style)
-		col++
-		if col >= x2 {
-			row++
-			col = x1
-		}
-		if row > y2 {
-			break
-		}
-	}
-}
-
-func (m *model) Draw(s tcell.Screen) {
+func (m *listModel) Draw(s tcell.Screen) {
 	style := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
 	for i, item := range m.persisted.Items {
 		cursor := " "
@@ -93,6 +93,18 @@ func (m *model) Draw(s tcell.Screen) {
 	}
 }
 
+func (m listModel) Save() error {
+	b, err := yaml.Marshal(m.persisted)
+	if err != nil {
+		return fmt.Errorf("failed to marshal model: %w", err)
+	}
+	err = os.WriteFile(UserDataFile(), b, 0600)
+	if err != nil {
+		return fmt.Errorf("failed to save model: %w", err)
+	}
+	return nil
+}
+
 func UserHomeDir() string {
 	usr, err := os.UserHomeDir()
 	if err != nil {
@@ -105,20 +117,8 @@ func UserDataFile() string {
 	return filepath.Join(UserHomeDir(), ".sift.yaml")
 }
 
-func (m model) Save() error {
-	b, err := yaml.Marshal(m.persisted)
-	if err != nil {
-		return fmt.Errorf("failed to marshal model: %w", err)
-	}
-	err = os.WriteFile(UserDataFile(), b, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to save model: %w", err)
-	}
-	return nil
-}
-
-func InitialModel() model {
-	return model{
+func InitialModel() listModel {
+	return listModel{
 		persisted: persistedModel{
 			Items:    samples(),
 			Selected: make(map[int]struct{}),
@@ -126,7 +126,7 @@ func InitialModel() model {
 	}
 }
 
-func LoadModel() model {
+func LoadModel() listModel {
 	m := InitialModel()
 
 	b, err := os.ReadFile(UserDataFile())
