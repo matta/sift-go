@@ -10,7 +10,7 @@ import (
 	"github.com/ghodss/yaml"
 )
 
-func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) {
+func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) (int, int) {
 	row := y1
 	col := x1
 	for _, r := range text {
@@ -24,6 +24,7 @@ func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string
 			break
 		}
 	}
+	return col, row
 }
 
 type todo struct {
@@ -40,6 +41,11 @@ func samples() []todo {
 	}
 }
 
+type model interface {
+	Update(screen tcell.Screen, event tcell.Event) model
+	Draw(s tcell.Screen)
+}
+
 type persistedModel struct {
 	Items    []todo
 	Cursor   int
@@ -51,7 +57,7 @@ type listModel struct {
 	quit      bool
 }
 
-func (m *listModel) Update(screen tcell.Screen, event tcell.Event) {
+func (m *listModel) Update(screen tcell.Screen, event tcell.Event) model {
 	switch event := event.(type) {
 	case *tcell.EventKey:
 		switch {
@@ -70,9 +76,12 @@ func (m *listModel) Update(screen tcell.Screen, event tcell.Event) {
 		case event.Key() == tcell.KeyRune && event.Rune() == 'x':
 			m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
 		case event.Key() == tcell.KeyRune && event.Rune() == 'a':
-			m.persisted.Items = append(m.persisted.Items, todo{Title: ""})
+			return &addModel{
+				list: m,
+			}
 		}
 	}
+	return m
 }
 
 func (m *listModel) Draw(s tcell.Screen) {
@@ -93,7 +102,7 @@ func (m *listModel) Draw(s tcell.Screen) {
 	}
 }
 
-func (m listModel) Save() error {
+func (m *listModel) Save() error {
 	b, err := yaml.Marshal(m.persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
@@ -103,6 +112,49 @@ func (m listModel) Save() error {
 		return fmt.Errorf("failed to save model: %w", err)
 	}
 	return nil
+}
+
+type addModel struct {
+	list   *listModel
+	title  string
+	events []tcell.Event
+}
+
+func (m *addModel) Update(screen tcell.Screen, event tcell.Event) model {
+	m.events = append(m.events, event)
+	// If m.events has more than 5 elements remove the first one
+	for len(m.events) > 5 {
+		m.events = m.events[1:]
+	}
+	switch event := event.(type) {
+	case *tcell.EventKey:
+		switch {
+		case event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlC:
+			return m.list
+		case event.Key() == tcell.KeyBackspace2 || event.Key() == tcell.KeyBackspace:
+			// Remove the last rune from m.title
+			if len(m.title) > 0 {
+				m.title = m.title[:len(m.title)-1]
+			}
+		case event.Key() == tcell.KeyRune:
+			m.title += string(event.Rune())
+		case event.Key() == tcell.KeyEnter:
+			m.list.persisted.Items = append(m.list.persisted.Items, todo{Title: m.title, Done: false})
+			return m.list
+		}
+	}
+	return m
+}
+
+func (m *addModel) Draw(s tcell.Screen) {
+	line := fmt.Sprintf("Add new todo with title: %s", m.title)
+	x, y := drawText(s, 0, 0, 80, 0, tcell.StyleDefault, line)
+	s.ShowCursor(x, y)
+
+	// for each m.events, draw it
+	for _, e := range m.events {
+		_, y = drawText(s, 0, y+1, 80, y+5, tcell.StyleDefault, fmt.Sprintf("%+v", e))
+	}
 }
 
 func UserHomeDir() string {
@@ -147,7 +199,8 @@ func LoadModel() listModel {
 }
 
 func main() {
-	model := LoadModel()
+	listModel := LoadModel()
+	var model model = &listModel
 
 	s, err := tcell.NewScreen()
 	if err != nil {
@@ -164,8 +217,9 @@ func main() {
 	s.Clear()
 
 	wantSync := false
-	for !model.quit {
+	for !listModel.quit {
 		// Update screen
+		s.Clear()
 		model.Draw(s)
 		if wantSync {
 			s.Sync()
@@ -182,10 +236,10 @@ func main() {
 		case *tcell.EventResize:
 			wantSync = true
 		}
-		model.Update(s, ev)
+		model = model.Update(s, ev)
 	}
 	s.Fini()
-	if err := model.Save(); err != nil {
+	if err := listModel.Save(); err != nil {
 		panic(err)
 	}
 	os.Exit(0)
