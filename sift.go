@@ -99,6 +99,7 @@ func (m *listModel) Update(screen tcell.Screen, event tcell.Event) model {
 
 func (m *listModel) Draw(s tcell.Screen) {
 	style := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
+	screenExtent := ScreenExtent(s)
 	for i, item := range m.persisted.Items {
 		cursor := " "
 		if i == m.persisted.Cursor {
@@ -111,7 +112,7 @@ func (m *listModel) Draw(s tcell.Screen) {
 		}
 
 		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title)
-		drawText(s, bounds{position{col: 0, row: i}, extent{width: 20, height: 1}}, style, line)
+		drawText(s, bounds{position{col: 0, row: i}, extent{width: screenExtent.width, height: 1}}, style, line)
 	}
 }
 
