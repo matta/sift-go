@@ -10,21 +10,34 @@ import (
 	"github.com/ghodss/yaml"
 )
 
-func drawText(s tcell.Screen, x1, y1, x2, y2 int, style tcell.Style, text string) (int, int) {
-	row := y1
-	col := x1
+type position struct {
+	col int
+	row int
+}
+
+type extent struct {
+	width  int
+	height int
+}
+
+type bounds struct {
+	position
+	extent
+}
+
+func drawText(s tcell.Screen, b bounds, style tcell.Style, text string) position {
+	p := b.position
 	for _, r := range text {
-		s.SetContent(col, row, r, nil, style)
-		col++
-		if col >= x2 {
-			row++
-			col = x1
-		}
-		if row > y2 {
+		if p.row >= b.row+b.height {
 			break
 		}
+		s.SetContent(p.col, p.row, r, nil, style)
+		p.col++
+		if p.col >= b.col+b.width {
+			p = position{row: p.row + 1, col: b.col}
+		}
 	}
-	return col, row
+	return p
 }
 
 type todo struct {
@@ -98,7 +111,7 @@ func (m *listModel) Draw(s tcell.Screen) {
 		}
 
 		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title)
-		drawText(s, 0, i, 20, i, style, line)
+		drawText(s, bounds{position{col: 0, row: i}, extent{width: 20, height: 1}}, style, line)
 	}
 }
 
@@ -121,17 +134,18 @@ type addModel struct {
 }
 
 func (m *addModel) Update(screen tcell.Screen, event tcell.Event) model {
-	m.events = append(m.events, event)
-	// If m.events has more than 5 elements remove the first one
-	for len(m.events) > 5 {
-		m.events = m.events[1:]
-	}
 	switch event := event.(type) {
 	case *tcell.EventKey:
+		m.events = append(m.events, event)
+		// If m.events has more than 5 elements remove the first one.
+		// TODO: Why? Looks like a hack to prevent unbounded type ahead?
+		for len(m.events) > 5 {
+			m.events = m.events[1:]
+		}
 		switch {
 		case event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlC:
 			return m.list
-		case event.Key() == tcell.KeyBackspace2 || event.Key() == tcell.KeyBackspace:
+		case event.Key() == tcell.KeyBackspace || event.Key() == tcell.KeyBackspace2:
 			// Remove the last rune from m.title
 			if len(m.title) > 0 {
 				m.title = m.title[:len(m.title)-1]
@@ -146,14 +160,26 @@ func (m *addModel) Update(screen tcell.Screen, event tcell.Event) model {
 	return m
 }
 
-func (m *addModel) Draw(s tcell.Screen) {
-	line := fmt.Sprintf("Add new todo with title: %s", m.title)
-	x, y := drawText(s, 0, 0, 80, 0, tcell.StyleDefault, line)
-	s.ShowCursor(x, y)
+func ScreenExtent(s tcell.Screen) extent {
+	width, height := s.Size()
+	return extent{width: width, height: height}
+}
 
-	// for each m.events, draw it
+func (m *addModel) Draw(s tcell.Screen) {
+	screenSize := ScreenExtent(s)
+	line := fmt.Sprintf("Add new todo with title: %s", m.title)
+	p := drawText(s, bounds{position{0, 0}, screenSize}, tcell.StyleDefault, line)
+	s.ShowCursor(p.col, p.row)
+
 	for _, e := range m.events {
-		_, y = drawText(s, 0, y+1, 80, y+5, tcell.StyleDefault, fmt.Sprintf("%+v", e))
+		if p.col != 0 {
+			p.col = 0
+			p.row++
+		}
+		extent := screenSize
+		extent.height -= p.row
+		end := drawText(s, bounds{p, extent}, tcell.StyleDefault, fmt.Sprintf("%+v", e))
+		p.row = end.row
 	}
 }
 
@@ -216,14 +242,14 @@ func main() {
 
 	s.Clear()
 
-	wantSync := false
+	wasResize := false
 	for !listModel.quit {
 		// Update screen
 		s.Clear()
 		model.Draw(s)
-		if wantSync {
+		if wasResize {
 			s.Sync()
-			wantSync = false
+			wasResize = false
 		} else {
 			s.Show()
 		}
@@ -234,7 +260,7 @@ func main() {
 		// Process event
 		switch ev.(type) {
 		case *tcell.EventResize:
-			wantSync = true
+			wasResize = true
 		}
 		model = model.Update(s, ev)
 	}
