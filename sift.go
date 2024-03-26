@@ -31,6 +31,7 @@ func drawText(s tcell.Screen, b bounds, style tcell.Style, text string) position
 		if p.row >= b.row+b.height {
 			break
 		}
+		// TODO: handle word wrapping and wide chars properly.
 		s.SetContent(p.col, p.row, r, nil, style)
 		p.col++
 		if p.col >= b.col+b.width {
