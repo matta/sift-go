@@ -107,7 +107,7 @@ func (m model) Init() tea.Cmd {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Handle inconvenience of textinput.Update not taking a pointer receiver.
 	updateTextInput := func(input *textinput.Model, msg tea.Msg) tea.Cmd {
-		temp, cmd := input.Update(msg);
+		temp, cmd := input.Update(msg)
 		*input = temp
 		return cmd
 	}
