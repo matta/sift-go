@@ -8,13 +8,10 @@ import (
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/ghodss/yaml"
 )
-
-type addItemMessage struct {
-	Title string
-}
 
 type todo struct {
 	Title string
@@ -36,10 +33,11 @@ type persistedModel struct {
 	Selected map[int]struct{}
 }
 
-type listModel struct {
+type model struct {
 	keys      keyMap
 	help      help.Model
 	persisted persistedModel
+	textInput textinput.Model
 }
 
 // keyMap holds a set of keybindings. To work for help it must satisfy
@@ -51,6 +49,8 @@ type keyMap struct {
 	Add    key.Binding
 	Help   key.Binding
 	Quit   key.Binding
+	Cancel key.Binding
+	Accept key.Binding
 }
 
 // ShortHelp returns keybindings to be shown in the mini help view. It's part
@@ -93,26 +93,34 @@ var keys = keyMap{
 		key.WithKeys("q", "esc", "ctrl+c"),
 		key.WithHelp("q", "quit"),
 	),
+	Cancel: key.NewBinding(key.WithKeys("esc")),
+	Accept: key.NewBinding(
+		key.WithKeys("enter")),
 }
 
 // Init implements tea.Model.
-func (m listModel) Init() tea.Cmd {
+func (m model) Init() tea.Cmd {
 	return nil
 }
 
 // Update implements tea.Model.
-func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	// Handle inconvenience of textinput.Update not taking a pointer receiver.
+	updateTextInput := func(input *textinput.Model, msg tea.Msg) tea.Cmd {
+		temp, cmd := input.Update(msg);
+		*input = temp
+		return cmd
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// If we set a width on the help menu it can gracefully truncate its
-		// view as needed.
+		// If we set a width on our sub-models so they can respond as needed.
 		m.help.Width = msg.Width
+		m.textInput.Width = msg.Width
 	case tea.KeyMsg:
 		switch {
 		case key.Matches(msg, m.keys.Help):
 			m.help.ShowAll = !m.help.ShowAll
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
 		case key.Matches(msg, m.keys.Up):
 			if m.persisted.Cursor > 0 {
 				m.persisted.Cursor--
@@ -121,19 +129,38 @@ func (m listModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.persisted.Cursor < len(m.persisted.Items)-1 {
 				m.persisted.Cursor++
 			}
+
 		case key.Matches(msg, m.keys.Toggle):
 			m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
+
 		case key.Matches(msg, m.keys.Add):
-			m.persisted.Items = append(m.persisted.Items, todo{Title: "", Done: false})
+			cmd := m.textInput.Focus()
+			return m, cmd
+
+		case m.textInput.Focused() && key.Matches(msg, m.keys.Cancel):
+			m.textInput.Reset()
+			m.textInput.Blur()
+
+		case m.textInput.Focused() && key.Matches(msg, m.keys.Accept):
+			if m.textInput.Value() != "" {
+				m.persisted.Items = append(m.persisted.Items, todo{Title: m.textInput.Value()})
+			}
+			m.textInput.Reset()
+			m.textInput.Blur()
+
+		case m.textInput.Focused():
+			cmd := updateTextInput(&m.textInput, msg)
+			return m, cmd
+
+		case key.Matches(msg, m.keys.Quit):
+			return m, tea.Quit
 		}
-	case addItemMessage:
-		m.persisted.Items = append(m.persisted.Items, todo{Title: msg.Title})
 	}
 	return m, nil
 }
 
 // Update implements tea.Model.
-func (m listModel) View() string {
+func (m model) View() string {
 	s := ""
 	for i, item := range m.persisted.Items {
 		cursor := " "
@@ -149,11 +176,15 @@ func (m listModel) View() string {
 		s += fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title)
 	}
 
+	if m.textInput.Focused() {
+		s += m.textInput.View()
+	}
+
 	helpView := m.help.View(m.keys)
 	return s + "\n" + helpView
 }
 
-func (m *listModel) Save() error {
+func (m *model) Save() error {
 	b, err := yaml.Marshal(m.persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
@@ -177,18 +208,19 @@ func UserDataFile() string {
 	return filepath.Join(UserHomeDir(), ".sift.yaml")
 }
 
-func InitialModel() listModel {
-	return listModel{
+func InitialModel() model {
+	return model{
 		keys: keys,
 		help: help.New(),
 		persisted: persistedModel{
 			Items:    samples(),
 			Selected: make(map[int]struct{}),
 		},
+		textInput: textinput.New(),
 	}
 }
 
-func LoadModel() listModel {
+func LoadModel() model {
 	m := InitialModel()
 
 	b, err := os.ReadFile(UserDataFile())
@@ -215,7 +247,7 @@ func main() {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
 	}
-	finalModel := m.(listModel)
+	finalModel := m.(model)
 	if err := finalModel.Save(); err != nil {
 		panic(err)
 	}
