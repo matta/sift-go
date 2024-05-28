@@ -118,42 +118,45 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.help.Width = msg.Width
 		m.textInput.Width = msg.Width
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-		case key.Matches(msg, m.keys.Up):
-			if m.persisted.Cursor > 0 {
-				m.persisted.Cursor--
+		if m.textInput.Focused() {
+			switch {
+			case key.Matches(msg, m.keys.Accept):
+				if m.textInput.Value() != "" {
+					m.persisted.Items = append(m.persisted.Items, todo{Title: m.textInput.Value()})
+				}
+				fallthrough
+
+			case key.Matches(msg, m.keys.Cancel):
+				m.textInput.Reset()
+				m.textInput.Blur()
+
+			default:
+				cmd := updateTextInput(&m.textInput, msg)
+				return m, cmd
 			}
-		case key.Matches(msg, m.keys.Down):
-			if m.persisted.Cursor < len(m.persisted.Items)-1 {
-				m.persisted.Cursor++
+		} else {
+			switch {
+			case key.Matches(msg, m.keys.Help):
+				m.help.ShowAll = !m.help.ShowAll
+			case key.Matches(msg, m.keys.Up):
+				if m.persisted.Cursor > 0 {
+					m.persisted.Cursor--
+				}
+			case key.Matches(msg, m.keys.Down):
+				if m.persisted.Cursor < len(m.persisted.Items)-1 {
+					m.persisted.Cursor++
+				}
+
+			case key.Matches(msg, m.keys.Toggle):
+				m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
+
+			case key.Matches(msg, m.keys.Add):
+				cmd := m.textInput.Focus()
+				return m, cmd
+
+			case key.Matches(msg, m.keys.Quit):
+				return m, tea.Quit
 			}
-
-		case key.Matches(msg, m.keys.Toggle):
-			m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
-
-		case key.Matches(msg, m.keys.Add):
-			cmd := m.textInput.Focus()
-			return m, cmd
-
-		case m.textInput.Focused() && key.Matches(msg, m.keys.Cancel):
-			m.textInput.Reset()
-			m.textInput.Blur()
-
-		case m.textInput.Focused() && key.Matches(msg, m.keys.Accept):
-			if m.textInput.Value() != "" {
-				m.persisted.Items = append(m.persisted.Items, todo{Title: m.textInput.Value()})
-			}
-			m.textInput.Reset()
-			m.textInput.Blur()
-
-		case m.textInput.Focused():
-			cmd := updateTextInput(&m.textInput, msg)
-			return m, cmd
-
-		case key.Matches(msg, m.keys.Quit):
-			return m, tea.Quit
 		}
 	}
 	return m, nil
