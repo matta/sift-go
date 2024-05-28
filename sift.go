@@ -180,11 +180,10 @@ func (m model) View() string {
 	}
 
 	if m.textInput.Focused() {
-		s += m.textInput.View()
+		return s + m.textInput.View()
+	} else {
+		return s + "\n" + m.help.View(m.keys)
 	}
-
-	helpView := m.help.View(m.keys)
-	return s + "\n" + helpView
 }
 
 func (m *model) Save() error {
