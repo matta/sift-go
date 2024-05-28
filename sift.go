@@ -241,7 +241,7 @@ func LoadModel() model {
 }
 
 func main() {
-	p := tea.NewProgram(LoadModel())
+	p := tea.NewProgram(LoadModel(), tea.WithAltScreen())
 	m, err := p.Run()
 	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
