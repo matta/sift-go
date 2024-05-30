@@ -2,6 +2,8 @@ module example/user/sift
 
 go 1.22.1
 
+require github.com/google/uuid v1.6.0
+
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/aymanbagabas/go-osc52/v2 v2.0.1 // indirect
