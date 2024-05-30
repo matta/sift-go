@@ -1,16 +1,17 @@
 package replicatedtodo
 
 import (
-	"github.com/google/uuid"
 	"log"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Model is a collection of CRTDs used to store a synchronized set of items.
 //
 // Initial design inspired from https://adamreeve.co.nz/blog/todo-crdt.html
 type Model struct {
-	// This is a grow only set (G-Set) of items.
+	// This is a "grow only set" (G-Set) of items.
 	Items []Item
 
 	// This is a map of item IDs to their current state.
@@ -18,7 +19,7 @@ type Model struct {
 }
 
 type Item struct {
-	Id    string
+	ID    string
 	Title string
 }
 
@@ -32,10 +33,12 @@ func (model *Model) NewTodo(title string) string {
 	if err != nil {
 		log.Fatalf("Can't generate UUID: %v", err)
 	}
-	todo := Item{Id: id.String(), Title: title}
+
+	todo := Item{ID: id.String(), Title: title}
 	model.Items = append(model.Items, todo)
-	model.States[todo.Id] = State{"unchecked", time.Now()}
-	return todo.Id
+	model.States[todo.ID] = State{"unchecked", time.Now()}
+
+	return todo.ID
 }
 
 func (model *Model) GetState(id string) string {
@@ -52,5 +55,8 @@ func (model *Model) ToggleDone(id string) {
 }
 
 func New() Model {
-	return Model{States: make(map[string]State)}
+	return Model{
+		States: make(map[string]State),
+		Items:  make([]Item, 0),
+	}
 }

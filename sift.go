@@ -14,7 +14,7 @@ import (
 	"github.com/ghodss/yaml"
 )
 
-type modelWrapper struct {
+type teaModel struct {
 	wrapped *model
 }
 
@@ -28,17 +28,17 @@ type model struct {
 }
 
 // Init implements tea.Model.
-func (outer modelWrapper) Init() tea.Cmd {
+func (outer teaModel) Init() tea.Cmd {
 	return nil
 }
 
 // Update implements tea.Model.
-func (outer modelWrapper) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (outer teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return outer, outer.wrapped.update(msg)
 }
 
 // View implements tea.Model.
-func (outer modelWrapper) View() string {
+func (outer teaModel) View() string {
 	return outer.wrapped.view()
 }
 
@@ -48,6 +48,8 @@ func newModel() *model {
 		help:      help.New(),
 		persisted: replicatedtodo.New(),
 		textInput: textinput.New(),
+		ids:       make([]string, 0),
+		cursor:    0,
 	}
 }
 
@@ -123,98 +125,133 @@ func (m *model) newTodo(title string) {
 }
 
 func (m *model) save() error {
-	b, err := yaml.Marshal(m.persisted)
+	bytes, err := yaml.Marshal(m.persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
-	err = os.WriteFile(UserDataFile(), b, 0600)
+
+	var PERM = 0600
+	err = os.WriteFile(UserDataFile(), bytes, os.FileMode(PERM))
+
 	if err != nil {
 		return fmt.Errorf("failed to save model: %w", err)
 	}
+
 	return nil
 }
 
-func (m *model) update(msg tea.Msg) tea.Cmd {
-	// Handle inconvenience of textinput.Update not taking a pointer receiver.
-	updateTextInput := func(input *textinput.Model, msg tea.Msg) tea.Cmd {
-		temp, cmd := input.Update(msg)
-		*input = temp
-		return cmd
-	}
+func updateTextInput(input *textinput.Model, msg tea.Msg) tea.Cmd {
+	temp, cmd := input.Update(msg)
+	*input = temp
 
+	return cmd
+}
+
+func (m *model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		// If we set a width on our sub-models, so they can respond as needed.
 		m.help.Width = msg.Width
 		m.textInput.Width = msg.Width
 	case tea.KeyMsg:
-		switch {
-		case m.textInput.Focused():
-			switch {
-			case key.Matches(msg, m.keys.Cancel):
-				m.textInput.Reset()
-				m.textInput.Blur()
-
-			case key.Matches(msg, m.keys.Accept):
-				title := m.textInput.Value()
-				if title != "" {
-					m.newTodo(title)
-				}
-				m.textInput.Reset()
-				m.textInput.Blur()
-
-			default:
-				return updateTextInput(&m.textInput, msg)
-			}
-
-		case key.Matches(msg, m.keys.Help):
-			m.help.ShowAll = !m.help.ShowAll
-
-		case key.Matches(msg, m.keys.Up):
-			if m.cursor > 0 {
-				m.cursor--
-			}
-
-		case key.Matches(msg, m.keys.Down):
-			if m.cursor < len(m.persisted.Items)-1 {
-				m.cursor++
-			}
-
-		case key.Matches(msg, m.keys.Toggle):
-			m.persisted.ToggleDone(m.ids[m.cursor])
-
-		case key.Matches(msg, m.keys.Add):
-			return m.textInput.Focus()
-
-		case key.Matches(msg, m.keys.Quit):
-			return tea.Quit
-		}
+		return m.handleKeyMsg(msg)
 	}
+
 	return nil
 }
 
+func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
+	switch {
+	case m.textInput.Focused():
+		return m.handleFocusedTextInput(msg)
+
+	case key.Matches(msg, m.keys.Help):
+		m.help.ShowAll = !m.help.ShowAll
+
+	case key.Matches(msg, m.keys.Up):
+		m.cursorUp()
+
+	case key.Matches(msg, m.keys.Down):
+		m.cursorDown()
+
+	case key.Matches(msg, m.keys.Toggle):
+		m.persisted.ToggleDone(m.ids[m.cursor])
+
+	case key.Matches(msg, m.keys.Add):
+		return m.textInput.Focus()
+
+	case key.Matches(msg, m.keys.Quit):
+		return tea.Quit
+	}
+
+	return nil
+}
+
+func (m *model) cursorDown() {
+	if m.cursor < len(m.persisted.Items)-1 {
+		m.cursor++
+	}
+}
+
+func (m *model) cursorUp() {
+	if m.cursor > 0 {
+		m.cursor--
+	}
+}
+
+func (m *model) handleFocusedTextInput(msg tea.KeyMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, m.keys.Cancel):
+		m.resetTextInput()
+
+	case key.Matches(msg, m.keys.Accept):
+		m.accept()
+
+	default:
+		return updateTextInput(&m.textInput, msg)
+	}
+
+	return nil
+}
+
+func (m *model) accept() {
+	title := m.textInput.Value()
+	if title != "" {
+		m.newTodo(title)
+	}
+
+	m.resetTextInput()
+}
+
+func (m *model) resetTextInput() {
+	m.textInput.Reset()
+	m.textInput.Blur()
+}
+
 func (m *model) view() string {
-	s := ""
-	for i, item := range m.persisted.Items {
+	out := ""
+
+	for itemIndex, item := range m.persisted.Items {
 		cursor := " "
-		if i == m.cursor {
+		if itemIndex == m.cursor {
 			cursor = ">"
 		}
 
 		done := " "
-		if m.persisted.GetState(m.ids[i]) == "checked" {
+		if m.persisted.GetState(m.ids[itemIndex]) == "checked" {
 			done = "x"
 		}
 
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title)
+		out += fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title)
 	}
 
 	if m.textInput.Focused() {
-		s += m.textInput.View()
+		out += m.textInput.View()
 	}
 
 	helpView := m.help.View(m.keys)
-	return s + "\n" + helpView
+
+	return out + "\n" + helpView
 }
 
 func UserHomeDir() string {
@@ -222,6 +259,7 @@ func UserHomeDir() string {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	return usr
 }
 
@@ -229,49 +267,53 @@ func UserDataFile() string {
 	return filepath.Join(UserHomeDir(), ".sift.yaml")
 }
 
-func loadModel() modelWrapper {
-	m := loadPersistedModel()
+func loadModel() teaModel {
+	model := loadPersistedModel()
 
-	for _, item := range m.persisted.Items {
-		if m.persisted.GetState(item.Id) != "removed" {
-			m.ids = append(m.ids, item.Id)
+	for _, item := range model.persisted.Items {
+		if model.persisted.GetState(item.ID) != "removed" {
+			model.ids = append(model.ids, item.ID)
 		}
 	}
 
-	return modelWrapper{m}
+	return teaModel{model}
 }
 
 func loadPersistedModel() *model {
-	m := newModel()
+	model := newModel()
 
-	b, err := os.ReadFile(UserDataFile())
+	bytes, err := os.ReadFile(UserDataFile())
 	if err != nil {
 		log.Printf("Failed to read model file: %v", err)
-		m.addSampleItems()
-		return m
+		model.addSampleItems()
+
+		return model
 	}
 
-	var p replicatedtodo.Model
-	err = yaml.Unmarshal(b, &p)
-	if err != nil {
+	var replicatedModel replicatedtodo.Model
+	if err = yaml.Unmarshal(bytes, &replicatedModel); err != nil {
 		log.Printf("Failed to unmarshal model file: %v", err)
-		m.addSampleItems()
-		return m
+		model.addSampleItems()
+
+		return model
 	}
 
-	m.persisted = p
-	return m
+	model.persisted = replicatedModel
+
+	return model
 }
 
 func main() {
-	p := tea.NewProgram(loadModel())
-	m, err := p.Run()
+	teaModel := loadModel()
+	program := tea.NewProgram(loadModel())
+	_, err := program.Run()
+
 	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
 	}
-	finalModel := m.(modelWrapper)
-	if err := finalModel.wrapped.save(); err != nil {
+
+	if err := teaModel.wrapped.save(); err != nil {
 		panic(err)
 	}
 }

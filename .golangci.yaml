@@ -1,0 +1,12 @@
+linters:
+    enable-all: true
+    disable:
+        - paralleltest
+        - gofumpt
+        - depguard
+        - gci
+        - ireturn
+        - gochecknoglobals
+        - execinquery
+        - gomnd
+        - forbidigo
