@@ -24,7 +24,6 @@ type model struct {
 	persisted replicatedtodo.Model
 	ids       []string
 	cursor    int
-	selected  map[int]struct{}
 	textInput textinput.Model
 }
 
