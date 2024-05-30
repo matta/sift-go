@@ -1,11 +1,12 @@
 package main
 
 import (
-	"example/user/sift/internal/replicatedtodo"
 	"fmt"
 	"log"
 	"os"
 	"path/filepath"
+
+	"github.com/matta/sift/internal/replicatedtodo"
 
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"

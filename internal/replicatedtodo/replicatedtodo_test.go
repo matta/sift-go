@@ -1,8 +1,9 @@
 package replicatedtodo_test
 
 import (
-	"example/user/sift/internal/replicatedtodo"
 	"testing"
+
+	"github.com/matta/sift/internal/replicatedtodo"
 )
 
 func TestModel_NewTodo(t *testing.T) {

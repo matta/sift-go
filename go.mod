@@ -1,4 +1,4 @@
-module example/user/sift
+module github.com/matta/sift
 
 go 1.22.1
 
