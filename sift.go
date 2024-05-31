@@ -2,19 +2,19 @@ package main
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"slices"
-	"strings"
-
-	"github.com/matta/sift/internal/replicatedtodo"
-
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/log"
+	"github.com/davecgh/go-spew/spew"
 	"github.com/ghodss/yaml"
+	"github.com/matta/sift/internal/replicatedtodo"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 )
 
 type teaModel struct {
@@ -37,6 +37,7 @@ func (outer teaModel) Init() tea.Cmd {
 
 // Update implements tea.Model.
 func (outer teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	log.Debugf("Update: %+v", spew.Sdump(msg))
 	return outer, outer.wrapped.update(msg)
 }
 
@@ -309,6 +310,9 @@ func (m *model) view() string {
 	} else {
 		out += m.help.View(m.keys)
 	}
+
+	style := lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder())
+	out = style.Render(out)
 
 	return out
 }
