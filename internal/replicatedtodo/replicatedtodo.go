@@ -1,9 +1,11 @@
 package replicatedtodo
 
 import (
-	"log"
+	"fmt"
+	"strings"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/google/uuid"
 )
 
@@ -12,20 +14,65 @@ import (
 // Initial design inspired from https://adamreeve.co.nz/blog/todo-crdt.html
 type Model struct {
 	// This is a "grow only set" (G-Set) of items.
-	Items []Item
+	Items map[string]*PersistedItem
+}
 
-	// This is a map of item IDs to their current state.
-	States map[string]State
+type PersistedString struct {
+	Value     string
+	Timestamp time.Time
+}
+
+func newPersistedString(value string) PersistedString {
+	return PersistedString{Value: value, Timestamp: time.Now()}
+}
+
+type PersistedItem struct {
+	Title PersistedString
+	State PersistedString
+}
+
+func (i *PersistedItem) DebugString() any {
+	return fmt.Sprintf("PersistedItem @%p title=%q state=%q", i, i.Title, i.State)
+}
+
+func newPersistedItem(title string) *PersistedItem {
+	return &PersistedItem{Title: newPersistedString(title), State: newPersistedString("unchecked")}
 }
 
 type Item struct {
 	ID    string
 	Title string
+	State string
 }
 
-type State struct {
-	State     string
-	Timestamp time.Time
+func New() *Model {
+	return &Model{
+		Items: make(map[string]*PersistedItem),
+	}
+}
+
+func (model *Model) GetItem(id string) Item {
+	item := model.getItem(id)
+
+	return Item{
+		ID:    id,
+		Title: item.Title.Value,
+		State: item.State.Value,
+	}
+}
+
+func (model *Model) GetAllItems() []Item {
+	items := make([]Item, 0, len(model.Items))
+
+	for id, item := range model.Items {
+		items = append(items, Item{
+			ID:    id,
+			Title: item.Title.Value,
+			State: item.State.Value,
+		})
+	}
+
+	return items
 }
 
 func (model *Model) NewTodo(title string) string {
@@ -34,29 +81,41 @@ func (model *Model) NewTodo(title string) string {
 		log.Fatalf("Can't generate UUID: %v", err)
 	}
 
-	todo := Item{ID: id.String(), Title: title}
-	model.Items = append(model.Items, todo)
-	model.States[todo.ID] = State{"unchecked", time.Now()}
+	idStr := id.String()
+	model.Items[idStr] = newPersistedItem(title)
 
-	return todo.ID
+	return idStr
+}
+
+func (model *Model) getItem(id string) *PersistedItem {
+	return model.Items[id]
 }
 
 func (model *Model) GetState(id string) string {
-	return model.States[id].State
+	return model.getItem(id).State.Value
 }
 
 func (model *Model) ToggleDone(id string) {
-	switch model.GetState(id) {
+	item := model.getItem(id)
+	switch item.State.Value {
 	case "unchecked":
-		model.States[id] = State{"checked", time.Now()}
+		item.State = newPersistedString("checked")
 	case "checked":
-		model.States[id] = State{"unchecked", time.Now()}
+		item.State = newPersistedString("unchecked")
 	}
 }
 
-func New() Model {
-	return Model{
-		States: make(map[string]State),
-		Items:  make([]Item, 0),
+func (model *Model) SetTitle(id string, title string) {
+	model.getItem(id).Title = newPersistedString(title)
+}
+
+func (model *Model) DebugString() string {
+	var sb strings.Builder
+
+	sb.WriteString(fmt.Sprintf("Model @%p\n", model))
+	for id, item := range model.Items {
+		sb.WriteString(fmt.Sprintf("%v:\n  %s\n", id, item.DebugString()))
 	}
+
+	return sb.String()
 }

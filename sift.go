@@ -2,9 +2,10 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 
 	"github.com/matta/sift/internal/replicatedtodo"
 
@@ -12,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/log"
 	"github.com/ghodss/yaml"
 )
 
@@ -20,12 +22,12 @@ type teaModel struct {
 }
 
 type model struct {
-	keys      keyMap
-	help      help.Model
-	persisted replicatedtodo.Model
-	ids       []string
-	cursor    int
-	textInput textinput.Model
+	keys            keyMap
+	help            help.Model
+	persisted       *replicatedtodo.Model
+	cursorID        string
+	textInput       textinput.Model
+	acceptTextInput func(title string)
 }
 
 // Init implements tea.Model.
@@ -45,12 +47,12 @@ func (outer teaModel) View() string {
 
 func newModel() *model {
 	return &model{
-		keys:      keys,
-		help:      help.New(),
-		persisted: replicatedtodo.New(),
-		textInput: textinput.New(),
-		ids:       make([]string, 0),
-		cursor:    0,
+		keys:            keys,
+		help:            help.New(),
+		persisted:       replicatedtodo.New(),
+		textInput:       textinput.New(),
+		acceptTextInput: nil,
+		cursorID:        "",
 	}
 }
 
@@ -58,8 +60,6 @@ func newModel() *model {
 func (m *model) addSampleItems() {
 	m.newTodo("todo 1")
 	m.newTodo("todo 2")
-	m.newTodo("todo 3")
-	m.newTodo("todo 4")
 }
 
 // keyMap holds a set of keybindings. To work for help it must satisfy
@@ -69,6 +69,7 @@ type keyMap struct {
 	Down   key.Binding
 	Toggle key.Binding
 	Add    key.Binding
+	Edit   key.Binding
 	Help   key.Binding
 	Quit   key.Binding
 	Cancel key.Binding
@@ -107,6 +108,10 @@ var keys = keyMap{
 		key.WithKeys("a"),
 		key.WithHelp("a", "add item"),
 	),
+	Edit: key.NewBinding(
+		key.WithKeys("e"),
+		key.WithHelp("e", "edit item"),
+	),
 	Help: key.NewBinding(
 		key.WithKeys("?"),
 		key.WithHelp("?", "toggle help"),
@@ -121,12 +126,11 @@ var keys = keyMap{
 }
 
 func (m *model) newTodo(title string) {
-	id := m.persisted.NewTodo(title)
-	m.ids = append(m.ids, id)
+	m.persisted.NewTodo(title)
 }
 
 func (m *model) save() error {
-	bytes, err := yaml.Marshal(m.persisted)
+	bytes, err := yaml.Marshal(&m.persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
@@ -165,22 +169,18 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 	switch {
 	case m.textInput.Focused():
 		return m.handleFocusedTextInput(msg)
-
 	case key.Matches(msg, m.keys.Help):
 		m.help.ShowAll = !m.help.ShowAll
-
 	case key.Matches(msg, m.keys.Up):
 		m.cursorUp()
-
 	case key.Matches(msg, m.keys.Down):
 		m.cursorDown()
-
 	case key.Matches(msg, m.keys.Toggle):
-		m.persisted.ToggleDone(m.ids[m.cursor])
-
+		m.toggle()
 	case key.Matches(msg, m.keys.Add):
-		return m.textInput.Focus()
-
+		return m.add()
+	case key.Matches(msg, m.keys.Edit):
+		return m.edit()
 	case key.Matches(msg, m.keys.Quit):
 		return tea.Quit
 	}
@@ -188,26 +188,85 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 	return nil
 }
 
+func (m *model) toggle() {
+	id := m.currentItem().ID
+	m.persisted.ToggleDone(id)
+	log.Debugf("persisted after toggling %s\n%s", id, m.persisted.DebugString())
+}
+
+func (m *model) add() tea.Cmd {
+	m.acceptTextInput = func(title string) {
+		m.newTodo(title)
+		m.disableTextInput()
+		m.acceptTextInput = nil
+	}
+
+	return m.textInput.Focus()
+}
+
+func (m *model) edit() tea.Cmd {
+	m.acceptTextInput = func(title string) {
+		if len(title) > 0 {
+			m.persisted.SetTitle(m.currentItem().ID, title)
+			m.disableTextInput()
+		}
+
+		m.acceptTextInput = nil
+	}
+	m.textInput.SetValue(m.currentItem().Title)
+
+	return m.textInput.Focus()
+}
+
+func findID(items []replicatedtodo.Item, cursorID string) int {
+	index := slices.IndexFunc(items, func(item replicatedtodo.Item) bool {
+		return item.ID == cursorID
+	})
+
+	return index
+}
+
+func (m *model) currentItem() replicatedtodo.Item {
+	items := m.loadItems()
+	index := findID(items, m.cursorID)
+
+	return items[index]
+}
+
 func (m *model) cursorDown() {
-	if m.cursor < len(m.persisted.Items)-1 {
-		m.cursor++
+	items := m.loadItems()
+	index := findID(items, m.cursorID)
+
+	switch {
+	case len(items) == 0:
+		m.cursorID = ""
+	case index >= 0 && index < len(items)-1:
+		m.cursorID = items[index+1].ID
+	default:
+		m.cursorID = items[0].ID
 	}
 }
 
 func (m *model) cursorUp() {
-	if m.cursor > 0 {
-		m.cursor--
+	items := m.loadItems()
+	index := findID(items, m.cursorID)
+
+	switch {
+	case len(items) == 0:
+		m.cursorID = ""
+	case index > 0:
+		m.cursorID = items[index-1].ID
+	default:
+		m.cursorID = items[len(items)-1].ID
 	}
 }
 
 func (m *model) handleFocusedTextInput(msg tea.KeyMsg) tea.Cmd {
 	switch {
 	case key.Matches(msg, m.keys.Cancel):
-		m.resetTextInput()
-
+		m.disableTextInput()
 	case key.Matches(msg, m.keys.Accept):
 		m.accept()
-
 	default:
 		return updateTextInput(&m.textInput, msg)
 	}
@@ -216,15 +275,12 @@ func (m *model) handleFocusedTextInput(msg tea.KeyMsg) tea.Cmd {
 }
 
 func (m *model) accept() {
-	title := m.textInput.Value()
-	if title != "" {
-		m.newTodo(title)
-	}
-
-	m.resetTextInput()
+	m.acceptTextInput(m.textInput.Value())
+	m.acceptTextInput = nil
+	m.disableTextInput()
 }
 
-func (m *model) resetTextInput() {
+func (m *model) disableTextInput() {
 	m.textInput.Reset()
 	m.textInput.Blur()
 }
@@ -232,14 +288,16 @@ func (m *model) resetTextInput() {
 func (m *model) view() string {
 	out := ""
 
-	for itemIndex, item := range m.persisted.Items {
+	items := m.loadItems()
+
+	for _, item := range items {
 		cursor := " "
-		if itemIndex == m.cursor {
+		if item.ID == m.cursorID {
 			cursor = ">"
 		}
 
 		done := " "
-		if m.persisted.GetState(m.ids[itemIndex]) == "checked" {
+		if item.State == "checked" {
 			done = "x"
 		}
 
@@ -255,6 +313,18 @@ func (m *model) view() string {
 	return out
 }
 
+func (m *model) loadItems() []replicatedtodo.Item {
+	items := m.persisted.GetAllItems()
+	items = slices.DeleteFunc(items, func(item replicatedtodo.Item) bool {
+		return item.State == "removed"
+	})
+	slices.SortFunc(items, func(i, j replicatedtodo.Item) int {
+		return strings.Compare(i.ID, j.ID)
+	})
+
+	return items
+}
+
 func UserHomeDir() string {
 	usr, err := os.UserHomeDir()
 	if err != nil {
@@ -268,16 +338,10 @@ func UserDataFile() string {
 	return filepath.Join(UserHomeDir(), ".sift.yaml")
 }
 
-func loadModel() teaModel {
+func loadModel() *teaModel {
 	model := loadPersistedModel()
 
-	for _, item := range model.persisted.Items {
-		if model.persisted.GetState(item.ID) != "removed" {
-			model.ids = append(model.ids, item.ID)
-		}
-	}
-
-	return teaModel{model}
+	return &teaModel{model}
 }
 
 func loadPersistedModel() *model {
@@ -299,22 +363,51 @@ func loadPersistedModel() *model {
 		return model
 	}
 
-	model.persisted = replicatedModel
+	model.persisted = &replicatedModel
 
 	return model
 }
 
+func setUpLogging() *os.File {
+	logfilePath := os.Getenv("SIFT_LOGFILE")
+	if logfilePath != "" {
+		file, err := tea.LogToFileWith(logfilePath, "sift", log.Default())
+		if err != nil {
+			fmt.Printf("Error logging to file: %v\n", err)
+			os.Exit(1)
+		}
+
+		log.SetLevel(log.DebugLevel)
+		log.SetReportCaller(true)
+		log.SetReportTimestamp(true)
+		log.Debug("Debug logging enabled")
+
+		return file
+	}
+
+	return nil
+}
+
 func main() {
+	logFile := setUpLogging()
+	defer func() {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
+	}()
+
 	teaModel := loadModel()
-	program := tea.NewProgram(loadModel())
+
+	program := tea.NewProgram(teaModel, tea.WithAltScreen())
 	_, err := program.Run()
 
 	if err != nil {
-		fmt.Printf("Error running program: %v\n", err)
-		os.Exit(1)
+		log.Errorf("Error running program: %v", err)
 	}
 
 	if err := teaModel.wrapped.save(); err != nil {
-		panic(err)
+		log.Errorf("Error saving: %v", err)
 	}
+
+	log.Debug("program exiting")
 }
