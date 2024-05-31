@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/matta/sift/internal/replicatedtodo"
+
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -13,31 +15,51 @@ import (
 	"github.com/ghodss/yaml"
 )
 
-type todo struct {
-	Title string
-	Done  bool
-}
-
-func samples() []todo {
-	return []todo{
-		{Title: "todo 1", Done: true},
-		{Title: "todo 2", Done: false},
-		{Title: "todo 3", Done: true},
-		{Title: "todo 4", Done: false},
-	}
-}
-
-type persistedModel struct {
-	Items    []todo
-	Cursor   int
-	Selected map[int]struct{}
+type teaModel struct {
+	wrapped *model
 }
 
 type model struct {
 	keys      keyMap
 	help      help.Model
-	persisted persistedModel
+	persisted replicatedtodo.Model
+	ids       []string
+	cursor    int
 	textInput textinput.Model
+}
+
+// Init implements tea.Model.
+func (outer teaModel) Init() tea.Cmd {
+	return nil
+}
+
+// Update implements tea.Model.
+func (outer teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	return outer, outer.wrapped.update(msg)
+}
+
+// View implements tea.Model.
+func (outer teaModel) View() string {
+	return outer.wrapped.view()
+}
+
+func newModel() *model {
+	return &model{
+		keys:      keys,
+		help:      help.New(),
+		persisted: replicatedtodo.New(),
+		textInput: textinput.New(),
+		ids:       make([]string, 0),
+		cursor:    0,
+	}
+}
+
+//goland:noinspection GoMixedReceiverTypes
+func (m *model) addSampleItems() {
+	m.newTodo("todo 1")
+	m.newTodo("todo 2")
+	m.newTodo("todo 3")
+	m.newTodo("todo 4")
 }
 
 // keyMap holds a set of keybindings. To work for help it must satisfy
@@ -98,104 +120,139 @@ var keys = keyMap{
 		key.WithKeys("enter")),
 }
 
-// Init implements tea.Model.
-func (m model) Init() tea.Cmd {
+func (m *model) newTodo(title string) {
+	id := m.persisted.NewTodo(title)
+	m.ids = append(m.ids, id)
+}
+
+func (m *model) save() error {
+	bytes, err := yaml.Marshal(m.persisted)
+	if err != nil {
+		return fmt.Errorf("failed to marshal model: %w", err)
+	}
+
+	var PERM = 0600
+	err = os.WriteFile(UserDataFile(), bytes, os.FileMode(PERM))
+
+	if err != nil {
+		return fmt.Errorf("failed to save model: %w", err)
+	}
+
 	return nil
 }
 
-// Update implements tea.Model.
-func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	// Handle inconvenience of textinput.Update not taking a pointer receiver.
-	updateTextInput := func(input *textinput.Model, msg tea.Msg) tea.Cmd {
-		temp, cmd := input.Update(msg)
-		*input = temp
-		return cmd
-	}
+func updateTextInput(input *textinput.Model, msg tea.Msg) tea.Cmd {
+	temp, cmd := input.Update(msg)
+	*input = temp
 
+	return cmd
+}
+
+func (m *model) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		// If we set a width on our sub-models so they can respond as needed.
+		// If we set a width on our sub-models, so they can respond as needed.
 		m.help.Width = msg.Width
 		m.textInput.Width = msg.Width
 	case tea.KeyMsg:
-		if m.textInput.Focused() {
-			switch {
-			case key.Matches(msg, m.keys.Accept):
-				if m.textInput.Value() != "" {
-					m.persisted.Items = append(m.persisted.Items, todo{Title: m.textInput.Value()})
-				}
-				fallthrough
-
-			case key.Matches(msg, m.keys.Cancel):
-				m.textInput.Reset()
-				m.textInput.Blur()
-
-			default:
-				cmd := updateTextInput(&m.textInput, msg)
-				return m, cmd
-			}
-		} else {
-			switch {
-			case key.Matches(msg, m.keys.Help):
-				m.help.ShowAll = !m.help.ShowAll
-			case key.Matches(msg, m.keys.Up):
-				if m.persisted.Cursor > 0 {
-					m.persisted.Cursor--
-				}
-			case key.Matches(msg, m.keys.Down):
-				if m.persisted.Cursor < len(m.persisted.Items)-1 {
-					m.persisted.Cursor++
-				}
-
-			case key.Matches(msg, m.keys.Toggle):
-				m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
-
-			case key.Matches(msg, m.keys.Add):
-				cmd := m.textInput.Focus()
-				return m, cmd
-
-			case key.Matches(msg, m.keys.Quit):
-				return m, tea.Quit
-			}
-		}
+		return m.handleKeyMsg(msg)
 	}
-	return m, nil
+
+	return nil
 }
 
-// Update implements tea.Model.
-func (m model) View() string {
-	s := ""
-	for i, item := range m.persisted.Items {
+func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
+	switch {
+	case m.textInput.Focused():
+		return m.handleFocusedTextInput(msg)
+
+	case key.Matches(msg, m.keys.Help):
+		m.help.ShowAll = !m.help.ShowAll
+
+	case key.Matches(msg, m.keys.Up):
+		m.cursorUp()
+
+	case key.Matches(msg, m.keys.Down):
+		m.cursorDown()
+
+	case key.Matches(msg, m.keys.Toggle):
+		m.persisted.ToggleDone(m.ids[m.cursor])
+
+	case key.Matches(msg, m.keys.Add):
+		return m.textInput.Focus()
+
+	case key.Matches(msg, m.keys.Quit):
+		return tea.Quit
+	}
+
+	return nil
+}
+
+func (m *model) cursorDown() {
+	if m.cursor < len(m.persisted.Items)-1 {
+		m.cursor++
+	}
+}
+
+func (m *model) cursorUp() {
+	if m.cursor > 0 {
+		m.cursor--
+	}
+}
+
+func (m *model) handleFocusedTextInput(msg tea.KeyMsg) tea.Cmd {
+	switch {
+	case key.Matches(msg, m.keys.Cancel):
+		m.resetTextInput()
+
+	case key.Matches(msg, m.keys.Accept):
+		m.accept()
+
+	default:
+		return updateTextInput(&m.textInput, msg)
+	}
+
+	return nil
+}
+
+func (m *model) accept() {
+	title := m.textInput.Value()
+	if title != "" {
+		m.newTodo(title)
+	}
+
+	m.resetTextInput()
+}
+
+func (m *model) resetTextInput() {
+	m.textInput.Reset()
+	m.textInput.Blur()
+}
+
+func (m *model) view() string {
+	out := ""
+
+	for itemIndex, item := range m.persisted.Items {
 		cursor := " "
-		if i == m.persisted.Cursor {
+		if itemIndex == m.cursor {
 			cursor = ">"
 		}
 
 		done := " "
-		if m.persisted.Items[i].Done {
+		if m.persisted.GetState(m.ids[itemIndex]) == "checked" {
 			done = "x"
 		}
 
-		s += fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title)
+		out += fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title)
 	}
 
 	if m.textInput.Focused() {
-		return s + m.textInput.View()
+		out += m.textInput.View()
 	} else {
-		return s + "\n" + m.help.View(m.keys)
+		out += m.help.View(m.keys)
 	}
-}
 
-func (m *model) Save() error {
-	b, err := yaml.Marshal(m.persisted)
-	if err != nil {
-		return fmt.Errorf("failed to marshal model: %w", err)
-	}
-	err = os.WriteFile(UserDataFile(), b, 0600)
-	if err != nil {
-		return fmt.Errorf("failed to save model: %w", err)
-	}
-	return nil
+	return out
 }
 
 func UserHomeDir() string {
@@ -203,6 +260,7 @@ func UserHomeDir() string {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	return usr
 }
 
@@ -210,47 +268,53 @@ func UserDataFile() string {
 	return filepath.Join(UserHomeDir(), ".sift.yaml")
 }
 
-func InitialModel() model {
-	return model{
-		keys: keys,
-		help: help.New(),
-		persisted: persistedModel{
-			Items:    samples(),
-			Selected: make(map[int]struct{}),
-		},
-		textInput: textinput.New(),
+func loadModel() teaModel {
+	model := loadPersistedModel()
+
+	for _, item := range model.persisted.Items {
+		if model.persisted.GetState(item.ID) != "removed" {
+			model.ids = append(model.ids, item.ID)
+		}
 	}
+
+	return teaModel{model}
 }
 
-func LoadModel() model {
-	m := InitialModel()
+func loadPersistedModel() *model {
+	model := newModel()
 
-	b, err := os.ReadFile(UserDataFile())
+	bytes, err := os.ReadFile(UserDataFile())
 	if err != nil {
 		log.Printf("Failed to read model file: %v", err)
-		return m
+		model.addSampleItems()
+
+		return model
 	}
 
-	var p persistedModel
-	err = yaml.Unmarshal(b, &p)
-	if err != nil {
+	var replicatedModel replicatedtodo.Model
+	if err = yaml.Unmarshal(bytes, &replicatedModel); err != nil {
 		log.Printf("Failed to unmarshal model file: %v", err)
-		return m
+		model.addSampleItems()
+
+		return model
 	}
 
-	m.persisted = p
-	return m
+	model.persisted = replicatedModel
+
+	return model
 }
 
 func main() {
-	p := tea.NewProgram(LoadModel(), tea.WithAltScreen())
-	m, err := p.Run()
+	teaModel := loadModel()
+	program := tea.NewProgram(loadModel())
+	_, err := program.Run()
+
 	if err != nil {
 		fmt.Printf("Error running program: %v\n", err)
 		os.Exit(1)
 	}
-	finalModel := m.(model)
-	if err := finalModel.Save(); err != nil {
+
+	if err := teaModel.wrapped.save(); err != nil {
 		panic(err)
 	}
 }

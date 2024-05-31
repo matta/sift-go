@@ -1,6 +1,8 @@
-module example/user/sift
+module github.com/matta/sift
 
 go 1.22.1
+
+require github.com/google/uuid v1.6.0
 
 require (
 	github.com/atotto/clipboard v0.1.4 // indirect
