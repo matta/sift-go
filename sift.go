@@ -2,6 +2,11 @@ package main
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
+
 	"github.com/charmbracelet/bubbles/help"
 	"github.com/charmbracelet/bubbles/key"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -11,10 +16,6 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ghodss/yaml"
 	"github.com/matta/sift/internal/replicatedtodo"
-	"os"
-	"path/filepath"
-	"slices"
-	"strings"
 )
 
 type teaModel struct {
@@ -22,12 +23,11 @@ type teaModel struct {
 }
 
 type model struct {
-	keys            keyMap
-	help            help.Model
+	help            *help.Model
 	persisted       *replicatedtodo.Model
-	cursorID        string
-	textInput       textinput.Model
+	textInput       *textinput.Model
 	acceptTextInput func(title string)
+	cursorID        string
 }
 
 // Init implements tea.Model.
@@ -47,11 +47,12 @@ func (outer teaModel) View() string {
 }
 
 func newModel() *model {
+	help := help.New()
+	textInput := textinput.New()
 	return &model{
-		keys:            keys,
-		help:            help.New(),
+		help:            &help,
 		persisted:       replicatedtodo.New(),
-		textInput:       textinput.New(),
+		textInput:       &textInput,
 		acceptTextInput: nil,
 		cursorID:        "",
 	}
@@ -136,9 +137,8 @@ func (m *model) save() error {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
 
-	var PERM = 0600
+	PERM := 0600
 	err = os.WriteFile(UserDataFile(), bytes, os.FileMode(PERM))
-
 	if err != nil {
 		return fmt.Errorf("failed to save model: %w", err)
 	}
@@ -170,19 +170,19 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 	switch {
 	case m.textInput.Focused():
 		return m.handleFocusedTextInput(msg)
-	case key.Matches(msg, m.keys.Help):
+	case key.Matches(msg, keys.Help):
 		m.help.ShowAll = !m.help.ShowAll
-	case key.Matches(msg, m.keys.Up):
+	case key.Matches(msg, keys.Up):
 		m.cursorUp()
-	case key.Matches(msg, m.keys.Down):
+	case key.Matches(msg, keys.Down):
 		m.cursorDown()
-	case key.Matches(msg, m.keys.Toggle):
+	case key.Matches(msg, keys.Toggle):
 		m.toggle()
-	case key.Matches(msg, m.keys.Add):
+	case key.Matches(msg, keys.Add):
 		return m.add()
-	case key.Matches(msg, m.keys.Edit):
+	case key.Matches(msg, keys.Edit):
 		return m.edit()
-	case key.Matches(msg, m.keys.Quit):
+	case key.Matches(msg, keys.Quit):
 		return tea.Quit
 	}
 
@@ -264,12 +264,12 @@ func (m *model) cursorUp() {
 
 func (m *model) handleFocusedTextInput(msg tea.KeyMsg) tea.Cmd {
 	switch {
-	case key.Matches(msg, m.keys.Cancel):
+	case key.Matches(msg, keys.Cancel):
 		m.disableTextInput()
-	case key.Matches(msg, m.keys.Accept):
+	case key.Matches(msg, keys.Accept):
 		m.accept()
 	default:
-		return updateTextInput(&m.textInput, msg)
+		return updateTextInput(m.textInput, msg)
 	}
 
 	return nil
@@ -308,7 +308,7 @@ func (m *model) view() string {
 	if m.textInput.Focused() {
 		out += m.textInput.View()
 	} else {
-		out += m.help.View(m.keys)
+		out += m.help.View(keys)
 	}
 
 	style := lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder())
@@ -404,7 +404,6 @@ func main() {
 
 	program := tea.NewProgram(teaModel, tea.WithAltScreen())
 	_, err := program.Run()
-
 	if err != nil {
 		log.Errorf("Error running program: %v", err)
 	}
