@@ -110,12 +110,12 @@ func (model *Model) SetTitle(id string, title string) {
 }
 
 func (model *Model) DebugString() string {
-	var sb strings.Builder
+	var builder strings.Builder
 
-	sb.WriteString(fmt.Sprintf("Model @%p\n", model))
+	builder.WriteString(fmt.Sprintf("Model @%p\n", model))
 	for id, item := range model.Items {
-		sb.WriteString(fmt.Sprintf("%v:\n  %s\n", id, item.DebugString()))
+		builder.WriteString(fmt.Sprintf("%v:\n  %s\n", id, item.DebugString()))
 	}
 
-	return sb.String()
+	return builder.String()
 }
