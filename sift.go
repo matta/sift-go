@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -12,7 +14,6 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/log"
 	"github.com/davecgh/go-spew/spew"
 	"github.com/ghodss/yaml"
 	"github.com/matta/sift/internal/replicatedtodo"
@@ -22,28 +23,36 @@ type teaModel struct {
 	wrapped *model
 }
 
-type model struct {
-	help            *help.Model
-	persisted       *replicatedtodo.Model
-	textInput       *textinput.Model
-	acceptTextInput func(title string)
-	cursorID        string
-}
-
 // Init implements tea.Model.
 func (outer teaModel) Init() tea.Cmd {
+	slog.Debug("teaModel.Init()")
 	return nil
 }
 
 // Update implements tea.Model.
 func (outer teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	log.Debugf("Update: %+v", spew.Sdump(msg))
-	return outer, outer.wrapped.update(msg)
+	slog.Debug(fmt.Sprintf("teaModel.Update: '%+v' ENTER", spew.Sdump(msg)))
+	cmd := outer.wrapped.update(msg)
+	slog.Debug(fmt.Sprintf("teaModel.Update: '%+v' LEAVE", spew.Sdump(msg)))
+	return outer, cmd
 }
 
 // View implements tea.Model.
 func (outer teaModel) View() string {
-	return outer.wrapped.view()
+	slog.Debug("View() ENTER")
+	out := outer.wrapped.view()
+	slog.Debug("View() LEAVE")
+	return out
+}
+
+type model struct {
+	help            *help.Model
+	persisted       *replicatedtodo.Model
+	textInput       *textinput.Model
+	windowWidth     int
+	windowHeight    int
+	acceptTextInput func(title string)
+	cursorID        string
 }
 
 func newModel() *model {
@@ -58,7 +67,6 @@ func newModel() *model {
 	}
 }
 
-//goland:noinspection GoMixedReceiverTypes
 func (m *model) addSampleItems() {
 	m.newTodo("todo 1")
 	m.newTodo("todo 2")
@@ -159,6 +167,8 @@ func (m *model) update(msg tea.Msg) tea.Cmd {
 		// If we set a width on our sub-models, so they can respond as needed.
 		m.help.Width = msg.Width
 		m.textInput.Width = msg.Width
+		m.windowWidth = msg.Width
+		m.windowHeight = msg.Height
 	case tea.KeyMsg:
 		return m.handleKeyMsg(msg)
 	}
@@ -192,7 +202,7 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 func (m *model) toggle() {
 	id := m.currentItem().ID
 	m.persisted.ToggleDone(id)
-	log.Debugf("persisted after toggling %s\n%s", id, m.persisted.DebugString())
+	slog.Debug("persisted after toggling %s\n%s", id, m.persisted.DebugString())
 }
 
 func (m *model) add() tea.Cmd {
@@ -287,6 +297,16 @@ func (m *model) disableTextInput() {
 }
 
 func (m *model) view() string {
+	return m.viewOld()
+}
+
+func (m *model) viewOld() string {
+	// The size of the screen is unknown before the first tea.WindowSizeMsg.
+	// In this case don't render.
+	if m.windowWidth == 0 || m.windowHeight == 0 {
+		return "Hello!"
+	}
+
 	out := ""
 
 	items := m.loadItems()
@@ -315,6 +335,60 @@ func (m *model) view() string {
 	out = style.Render(out)
 
 	return out
+}
+
+func (m *model) viewNew() string {
+	{
+		// The size of the screen is unknown before the first tea.WindowSizeMsg.
+		// In this case don't render.
+		if m.windowWidth == 0 || m.windowHeight == 0 {
+			return ""
+		}
+
+		var out strings.Builder
+
+		if m.textInput.Focused() {
+			out.WriteString(m.textInput.View())
+		} else {
+			slog.Debug("m.help.View()")
+			help := m.help.View(keys)
+			helpHeight := lipgloss.Height(help)
+
+			itemsHeight := m.windowHeight - helpHeight - 2
+
+			var itemsOut strings.Builder
+			items := m.loadItems()
+
+			for i, item := range items {
+				if i > itemsHeight {
+					break
+				}
+				cursor := " "
+				if item.ID == m.cursorID {
+					cursor = ">"
+				}
+
+				done := " "
+				if item.State == "checked" {
+					done = "x"
+				}
+
+				itemsOut.WriteString(
+					fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title))
+			}
+
+			out.WriteString(
+				lipgloss.NewStyle().Height(itemsHeight).Render(itemsOut.String()))
+			out.WriteString(help)
+		}
+
+		style := lipgloss.NewStyle().
+			Width(m.windowWidth - 2).
+			Height(m.windowHeight - 2).
+			BorderStyle(lipgloss.NormalBorder())
+
+		return style.Render(out.String())
+	}
 }
 
 func (m *model) loadItems() []replicatedtodo.Item {
@@ -381,10 +455,7 @@ func setUpLogging() *os.File {
 			os.Exit(1)
 		}
 
-		log.SetLevel(log.DebugLevel)
-		log.SetReportCaller(true)
-		log.SetReportTimestamp(true)
-		log.Debug("Debug logging enabled")
+		log.Default().SetFlags(log.LstdFlags | log.Lmicroseconds | log.Llongfile)
 
 		return file
 	}
@@ -399,18 +470,19 @@ func main() {
 			_ = logFile.Close()
 		}
 	}()
+	slog.Info("program started")
 
 	teaModel := loadModel()
 
 	program := tea.NewProgram(teaModel, tea.WithAltScreen())
 	_, err := program.Run()
 	if err != nil {
-		log.Errorf("Error running program: %v", err)
+		slog.Error("Error running program: %v", err)
 	}
 
 	if err := teaModel.wrapped.save(); err != nil {
-		log.Errorf("Error saving: %v", err)
+		slog.Error("Error saving: %v", err)
 	}
 
-	log.Debug("program exiting")
+	slog.Debug("program exiting")
 }
