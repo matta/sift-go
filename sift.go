@@ -25,10 +25,7 @@ import (
 // race condition that is avoided if this occurs in the very first call to
 // View().  In other words, if code executes in the 2nd call to View() it hangs.
 func workAroundIssue1036() {
-	_ = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
-		Light: "#DDDADA",
-		Dark:  "#9C9C00",
-	}).Render("Hello, World!")
+	_ = lipgloss.HasDarkBackground()
 }
 
 type teaModel struct {
@@ -36,13 +33,13 @@ type teaModel struct {
 }
 
 // Init implements tea.Model.
-func (outer teaModel) Init() tea.Cmd {
+func (outer *teaModel) Init() tea.Cmd {
 	slog.Debug("teaModel.Init()")
 	return nil
 }
 
 // Update implements tea.Model.
-func (outer teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+func (outer *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	slog.Debug(fmt.Sprintf("teaModel.Update: '%+v' ENTER", spew.Sdump(msg)))
 	cmd := outer.wrapped.update(msg)
 	slog.Debug(fmt.Sprintf("teaModel.Update: '%+v' LEAVE", spew.Sdump(msg)))
@@ -50,9 +47,8 @@ func (outer teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View implements tea.Model.
-func (outer teaModel) View() string {
+func (outer *teaModel) View() string {
 	slog.Debug("View() ENTER")
-	workAroundIssue1036()
 	out := outer.wrapped.view()
 	slog.Debug("View() LEAVE")
 	return out
@@ -477,6 +473,8 @@ func setUpLogging() *os.File {
 }
 
 func main() {
+	workAroundIssue1036()
+
 	logFile := setUpLogging()
 	defer func() {
 		if logFile != nil {
