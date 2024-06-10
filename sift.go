@@ -19,6 +19,18 @@ import (
 	"github.com/matta/sift/internal/replicatedtodo"
 )
 
+// Work around https://github.com/charmbracelet/bubbletea/issues/1036. This
+// code tickles the code path in lipgloss that asks termenv for the terminal's
+// background color.  Termenv memoizes the result, but there is some sort of
+// race condition that is avoided if this occurs in the very first call to
+// View().  In other words, if code executes in the 2nd call to View() it hangs.
+func workAroundIssue1036() {
+	_ = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{
+		Light: "#DDDADA",
+		Dark:  "#9C9C00",
+	}).Render("Hello, World!")
+}
+
 type teaModel struct {
 	wrapped *model
 }
@@ -40,6 +52,7 @@ func (outer teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 // View implements tea.Model.
 func (outer teaModel) View() string {
 	slog.Debug("View() ENTER")
+	workAroundIssue1036()
 	out := outer.wrapped.view()
 	slog.Debug("View() LEAVE")
 	return out
@@ -297,7 +310,7 @@ func (m *model) disableTextInput() {
 }
 
 func (m *model) view() string {
-	return m.viewOld()
+	return m.viewNew()
 }
 
 func (m *model) viewOld() string {
