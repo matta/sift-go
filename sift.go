@@ -385,9 +385,13 @@ func (m *model) viewNew() string {
 				itemsOut.WriteString(
 					fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title))
 			}
+			itemsOut.WriteString("\n")
 
-			out.WriteString(
-				lipgloss.NewStyle().Height(itemsHeight).Render(itemsOut.String()))
+			out.WriteString(lipgloss.NewStyle().
+				Background(lipgloss.AdaptiveColor{Light: "#0000ff", Dark: "#000099"}).
+				Height(itemsHeight).
+				Width(m.windowWidth - 2).
+				Render(itemsOut.String()))
 			out.WriteString(help)
 		}
 
