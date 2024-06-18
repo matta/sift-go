@@ -38,6 +38,14 @@ func (outer *teaModel) Init() tea.Cmd {
 	return nil
 }
 
+func foo() {
+	test := "this is a test"
+	if strings.Contains(test, "hi") {
+		test = strings.Replace(test, "hi", "", -1)
+	}
+	fmt.Println(test)
+}
+
 // Update implements tea.Model.
 func (outer *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	slog.Debug(fmt.Sprintf("teaModel.Update: '%+v' ENTER", spew.Sdump(msg)))
@@ -491,12 +499,13 @@ func main() {
 
 	program := tea.NewProgram(teaModel, tea.WithAltScreen())
 	_, err := program.Run()
+
 	if err != nil {
-		slog.Error("Error running program: %v", err)
+		slog.Error("Error running program", slog.Any("error", err))
 	}
 
 	if err := teaModel.wrapped.save(); err != nil {
-		slog.Error("Error saving: %v", err)
+		slog.Error("Error saving", slog.Any("error", err))
 	}
 
 	slog.Debug("program exiting")
