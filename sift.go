@@ -310,69 +310,53 @@ func (m *model) disableTextInput() {
 }
 
 func (m *model) view() string {
-	return m.viewNew()
-}
-
-func (m *model) viewNew() string {
-	{
-		// The size of the screen is unknown before the first tea.WindowSizeMsg.
-		// In this case don't render.
-		if m.windowWidth == 0 || m.windowHeight == 0 {
-			return ""
-		}
-
-		var out strings.Builder
-
-		borderWidth := 1
-		borderCount := 2
-		borderInset := borderWidth * borderCount
-
-		if m.textInput.Focused() {
-			out.WriteString(m.textInput.View())
-		} else {
-			slog.Debug("m.helpView.View()")
-			helpView := m.help.View(&m.keys)
-			helpHeight := lipgloss.Height(helpView)
-
-			itemsHeight := m.windowHeight - helpHeight - borderInset
-
-			var itemsOut strings.Builder
-			items := m.loadItems()
-
-			for i, item := range items {
-				if i > itemsHeight {
-					break
-				}
-				cursor := " "
-				if item.ID == m.cursorID {
-					cursor = ">"
-				}
-
-				done := " "
-				if item.State == "checked" {
-					done = "x"
-				}
-
-				itemsOut.WriteString(
-					fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title))
+	if m.windowWidth == 0 || m.windowHeight == 0 {
+		return ""
+	}
+	var out strings.Builder
+	borderWidth := 1
+	borderCount := 2
+	borderInset := borderWidth * borderCount
+	if m.textInput.Focused() {
+		out.WriteString(m.textInput.View())
+	} else {
+		slog.Debug("m.helpView.View()")
+		helpView := m.help.View(&m.keys)
+		helpHeight := lipgloss.Height(helpView)
+		itemsHeight := m.windowHeight - helpHeight - borderInset
+		var itemsOut strings.Builder
+		items := m.loadItems()
+		for i, item := range items {
+			if i > itemsHeight {
+				break
 			}
-			itemsOut.WriteString("\n")
-
-			out.WriteString(lipgloss.NewStyle().
-				Background(lipgloss.AdaptiveColor{Light: "#0000ff", Dark: "#000099"}).
+			cursor := " "
+			if item.ID == m.cursorID {
+				cursor = ">"
+			}
+			done := " "
+			if item.State == "checked" {
+				done = "x"
+			}
+			itemsOut.WriteString(fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title))
+		}
+		itemsOut.WriteString("\n")
+		out.WriteString(
+			lipgloss.NewStyle().
+				Background(lipgloss.AdaptiveColor{
+					Light: "#0000ff",
+					Dark:  "#000099",
+				}).
 				Height(itemsHeight).
 				Width(m.windowWidth - borderInset).
 				Render(itemsOut.String()))
-			out.WriteString(helpView)
-		}
-
-		style := lipgloss.NewStyle().
-			Width(m.windowWidth - borderInset).
-			Height(m.windowHeight - borderInset).
-			BorderStyle(lipgloss.NormalBorder())
-
-		return style.Render(out.String())
+		out.WriteString(helpView)
 	}
+	style := lipgloss.NewStyle().
+		Width(m.windowWidth - borderInset).
+		Height(m.windowHeight - borderInset).
+		BorderStyle(lipgloss.NormalBorder())
+	return style.Render(out.String())
 }
 
 func (m *model) loadItems() []replicatedtodo.Item {
