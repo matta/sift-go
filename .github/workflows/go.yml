@@ -27,8 +27,5 @@ jobs:
     - name: Test
       run: go test -v ./...
 
-    - name: Staticcheck
-      uses: dominikh/staticcheck-action@v1
-      with:
-        version: "latest"
-        install-go: false
+    - name: Golangci-lint
+      uses: golangci/golangci-lint-action@v6.0.1

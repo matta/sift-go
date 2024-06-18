@@ -2,30 +2,6 @@
 <project version="4">
   <component name="ProjectTasksOptions">
     <TaskOptions isEnabled="true">
-      <option name="arguments" value="run --disable=typecheck $FileDir$" />
-      <option name="checkSyntaxErrors" value="true" />
-      <option name="description" />
-      <option name="exitCodeBehavior" value="ERROR" />
-      <option name="fileExtension" value="go" />
-      <option name="immediateSync" value="true" />
-      <option name="name" value="golangci-lint" />
-      <option name="output" value="" />
-      <option name="outputFilters">
-        <array />
-      </option>
-      <option name="outputFromStdout" value="false" />
-      <option name="program" value="golangci-lint" />
-      <option name="runOnExternalChanges" value="true" />
-      <option name="scopeName" value="Project Files" />
-      <option name="trackOnlyRoot" value="true" />
-      <option name="workingDir" value="$ProjectFileDir$" />
-      <envs>
-        <env name="GOROOT" value="$GOROOT$" />
-        <env name="GOPATH" value="$GOPATH$" />
-        <env name="PATH" value="$GoBinDirs$" />
-      </envs>
-    </TaskOptions>
-    <TaskOptions isEnabled="true">
       <option name="arguments" value="-w $FilePath$" />
       <option name="checkSyntaxErrors" value="true" />
       <option name="description" />
@@ -39,6 +15,50 @@
       </option>
       <option name="outputFromStdout" value="false" />
       <option name="program" value="goimports" />
+      <option name="runOnExternalChanges" value="true" />
+      <option name="scopeName" value="Project Files" />
+      <option name="trackOnlyRoot" value="true" />
+      <option name="workingDir" value="$ProjectFileDir$" />
+      <envs>
+        <env name="GOROOT" value="$GOROOT$" />
+        <env name="GOPATH" value="$GOPATH$" />
+        <env name="PATH" value="$GoBinDirs$" />
+      </envs>
+    </TaskOptions>
+    <TaskOptions isEnabled="true">
+      <option name="arguments" value="" />
+      <option name="checkSyntaxErrors" value="true" />
+      <option name="description" />
+      <option name="exitCodeBehavior" value="ERROR" />
+      <option name="fileExtension" value="UNKNOWN" />
+      <option name="immediateSync" value="true" />
+      <option name="name" value="go staticcheck" />
+      <option name="output" value="" />
+      <option name="outputFilters">
+        <array />
+      </option>
+      <option name="outputFromStdout" value="false" />
+      <option name="program" value="$USER_HOME$/go/bin/staticcheck" />
+      <option name="runOnExternalChanges" value="true" />
+      <option name="scopeName" value="Project Files" />
+      <option name="trackOnlyRoot" value="false" />
+      <option name="workingDir" value="" />
+      <envs />
+    </TaskOptions>
+    <TaskOptions isEnabled="true">
+      <option name="arguments" value="fmt $FilePath$" />
+      <option name="checkSyntaxErrors" value="true" />
+      <option name="description" />
+      <option name="exitCodeBehavior" value="ERROR" />
+      <option name="fileExtension" value="go" />
+      <option name="immediateSync" value="true" />
+      <option name="name" value="go fmt" />
+      <option name="output" value="$FilePath$" />
+      <option name="outputFilters">
+        <array />
+      </option>
+      <option name="outputFromStdout" value="false" />
+      <option name="program" value="$GoExecPath$" />
       <option name="runOnExternalChanges" value="true" />
       <option name="scopeName" value="Project Files" />
       <option name="trackOnlyRoot" value="true" />

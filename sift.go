@@ -38,14 +38,6 @@ func (outer *teaModel) Init() tea.Cmd {
 	return nil
 }
 
-func foo() {
-	test := "this is a test"
-	if strings.Contains(test, "hi") {
-		test = strings.Replace(test, "hi", "", -1)
-	}
-	fmt.Println(test)
-}
-
 // Update implements tea.Model.
 func (outer *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	slog.Debug(fmt.Sprintf("teaModel.Update: '%+v' ENTER", spew.Sdump(msg)))
@@ -66,16 +58,18 @@ type model struct {
 	help            *help.Model
 	persisted       *replicatedtodo.Model
 	textInput       *textinput.Model
-	windowWidth     int
-	windowHeight    int
 	acceptTextInput func(title string)
 	cursorID        string
+	keys            keyMap
+	windowWidth     int
+	windowHeight    int
 }
 
 func newModel() *model {
 	h := help.New()
 	textInput := textinput.New()
 	return &model{
+		keys:            mainScreenKeys(),
 		help:            &h,
 		persisted:       replicatedtodo.New(),
 		textInput:       &textInput,
@@ -105,51 +99,53 @@ type keyMap struct {
 
 // ShortHelp returns keybindings to be shown in the mini help view. It's part
 // of the key.Map interface.
-func (k keyMap) ShortHelp() []key.Binding {
+func (k *keyMap) ShortHelp() []key.Binding {
 	return []key.Binding{k.Help, k.Quit}
 }
 
 // FullHelp returns keybindings for the expanded help view. It's part of the
 // key.Map interface.
-func (k keyMap) FullHelp() [][]key.Binding {
+func (k *keyMap) FullHelp() [][]key.Binding {
 	return [][]key.Binding{
 		{k.Up, k.Down, k.Toggle, k.Add}, // first column
 		{k.Help, k.Quit},                // second column
 	}
 }
 
-var keys = keyMap{
-	Up: key.NewBinding(
-		key.WithKeys("up", "k"),
-		key.WithHelp("↑/k", "move up"),
-	),
-	Down: key.NewBinding(
-		key.WithKeys("down", "j"),
-		key.WithHelp("↓/j", "move down"),
-	),
-	Toggle: key.NewBinding(
-		key.WithKeys("x"),
-		key.WithHelp("x", "toggle item"),
-	),
-	Add: key.NewBinding(
-		key.WithKeys("a"),
-		key.WithHelp("a", "add item"),
-	),
-	Edit: key.NewBinding(
-		key.WithKeys("e"),
-		key.WithHelp("e", "edit item"),
-	),
-	Help: key.NewBinding(
-		key.WithKeys("?"),
-		key.WithHelp("?", "toggle help"),
-	),
-	Quit: key.NewBinding(
-		key.WithKeys("q", "esc", "ctrl+c"),
-		key.WithHelp("q", "quit"),
-	),
-	Cancel: key.NewBinding(key.WithKeys("esc")),
-	Accept: key.NewBinding(
-		key.WithKeys("enter")),
+func mainScreenKeys() keyMap {
+	return keyMap{
+		Up: key.NewBinding(
+			key.WithKeys("up", "k"),
+			key.WithHelp("↑/k", "move up"),
+		),
+		Down: key.NewBinding(
+			key.WithKeys("down", "j"),
+			key.WithHelp("↓/j", "move down"),
+		),
+		Toggle: key.NewBinding(
+			key.WithKeys("x"),
+			key.WithHelp("x", "toggle item"),
+		),
+		Add: key.NewBinding(
+			key.WithKeys("a"),
+			key.WithHelp("a", "add item"),
+		),
+		Edit: key.NewBinding(
+			key.WithKeys("e"),
+			key.WithHelp("e", "edit item"),
+		),
+		Help: key.NewBinding(
+			key.WithKeys("?"),
+			key.WithHelp("?", "toggle help"),
+		),
+		Quit: key.NewBinding(
+			key.WithKeys("q", "esc", "ctrl+c"),
+			key.WithHelp("q", "quit"),
+		),
+		Cancel: key.NewBinding(key.WithKeys("esc")),
+		Accept: key.NewBinding(
+			key.WithKeys("enter")),
+	}
 }
 
 func (m *model) newTodo(title string) {
@@ -162,8 +158,8 @@ func (m *model) save() error {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
 
-	PERM := 0600
-	err = os.WriteFile(UserDataFile(), bytes, os.FileMode(PERM))
+	permissions := 0o600
+	err = os.WriteFile(UserDataFile(), bytes, os.FileMode(permissions))
 	if err != nil {
 		return fmt.Errorf("failed to save model: %w", err)
 	}
@@ -197,19 +193,19 @@ func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
 	switch {
 	case m.textInput.Focused():
 		return m.handleFocusedTextInput(msg)
-	case key.Matches(msg, keys.Help):
+	case key.Matches(msg, m.keys.Help):
 		m.help.ShowAll = !m.help.ShowAll
-	case key.Matches(msg, keys.Up):
+	case key.Matches(msg, m.keys.Up):
 		m.cursorUp()
-	case key.Matches(msg, keys.Down):
+	case key.Matches(msg, m.keys.Down):
 		m.cursorDown()
-	case key.Matches(msg, keys.Toggle):
+	case key.Matches(msg, m.keys.Toggle):
 		m.toggle()
-	case key.Matches(msg, keys.Add):
+	case key.Matches(msg, m.keys.Add):
 		return m.add()
-	case key.Matches(msg, keys.Edit):
+	case key.Matches(msg, m.keys.Edit):
 		return m.edit()
-	case key.Matches(msg, keys.Quit):
+	case key.Matches(msg, m.keys.Quit):
 		return tea.Quit
 	}
 
@@ -291,9 +287,9 @@ func (m *model) cursorUp() {
 
 func (m *model) handleFocusedTextInput(msg tea.KeyMsg) tea.Cmd {
 	switch {
-	case key.Matches(msg, keys.Cancel):
+	case key.Matches(msg, m.keys.Cancel):
 		m.disableTextInput()
-	case key.Matches(msg, keys.Accept):
+	case key.Matches(msg, m.keys.Accept):
 		m.accept()
 	default:
 		return updateTextInput(m.textInput, msg)
@@ -317,43 +313,6 @@ func (m *model) view() string {
 	return m.viewNew()
 }
 
-func (m *model) viewOld() string {
-	// The size of the screen is unknown before the first tea.WindowSizeMsg.
-	// In this case don't render.
-	if m.windowWidth == 0 || m.windowHeight == 0 {
-		return "Hello!"
-	}
-
-	out := ""
-
-	items := m.loadItems()
-
-	for _, item := range items {
-		cursor := " "
-		if item.ID == m.cursorID {
-			cursor = ">"
-		}
-
-		done := " "
-		if item.State == "checked" {
-			done = "x"
-		}
-
-		out += fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title)
-	}
-
-	if m.textInput.Focused() {
-		out += m.textInput.View()
-	} else {
-		out += m.help.View(keys)
-	}
-
-	style := lipgloss.NewStyle().BorderStyle(lipgloss.NormalBorder())
-	out = style.Render(out)
-
-	return out
-}
-
 func (m *model) viewNew() string {
 	{
 		// The size of the screen is unknown before the first tea.WindowSizeMsg.
@@ -364,14 +323,18 @@ func (m *model) viewNew() string {
 
 		var out strings.Builder
 
+		borderWidth := 1
+		borderCount := 2
+		borderInset := borderWidth * borderCount
+
 		if m.textInput.Focused() {
 			out.WriteString(m.textInput.View())
 		} else {
 			slog.Debug("m.helpView.View()")
-			helpView := m.help.View(keys)
+			helpView := m.help.View(&m.keys)
 			helpHeight := lipgloss.Height(helpView)
 
-			itemsHeight := m.windowHeight - helpHeight - 2
+			itemsHeight := m.windowHeight - helpHeight - borderInset
 
 			var itemsOut strings.Builder
 			items := m.loadItems()
@@ -398,14 +361,14 @@ func (m *model) viewNew() string {
 			out.WriteString(lipgloss.NewStyle().
 				Background(lipgloss.AdaptiveColor{Light: "#0000ff", Dark: "#000099"}).
 				Height(itemsHeight).
-				Width(m.windowWidth - 2).
+				Width(m.windowWidth - borderInset).
 				Render(itemsOut.String()))
 			out.WriteString(helpView)
 		}
 
 		style := lipgloss.NewStyle().
-			Width(m.windowWidth - 2).
-			Height(m.windowHeight - 2).
+			Width(m.windowWidth - borderInset).
+			Height(m.windowHeight - borderInset).
 			BorderStyle(lipgloss.NormalBorder())
 
 		return style.Render(out.String())
@@ -472,7 +435,7 @@ func setUpLogging() *os.File {
 	if logfilePath != "" {
 		file, err := tea.LogToFileWith(logfilePath, "sift", log.Default())
 		if err != nil {
-			fmt.Printf("Error logging to file: %v\n", err)
+			fmt.Fprintf(os.Stderr, "error logging to file: %s\n", err)
 			os.Exit(1)
 		}
 
@@ -499,12 +462,11 @@ func main() {
 
 	program := tea.NewProgram(teaModel, tea.WithAltScreen())
 	_, err := program.Run()
-
 	if err != nil {
 		slog.Error("Error running program", slog.Any("error", err))
 	}
 
-	if err := teaModel.wrapped.save(); err != nil {
+	if err = teaModel.wrapped.save(); err != nil {
 		slog.Error("Error saving", slog.Any("error", err))
 	}
 

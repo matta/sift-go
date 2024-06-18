@@ -1,3 +1,4 @@
+// inspired by https://adamreeve.co.nz/blog/todo-crdt.html
 package replicatedtodo
 
 import (
@@ -18,8 +19,8 @@ type Model struct {
 }
 
 type PersistedString struct {
-	Value     string
 	Timestamp time.Time
+	Value     string
 }
 
 func newPersistedString(value string) PersistedString {
