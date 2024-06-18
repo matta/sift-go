@@ -65,10 +65,10 @@ type model struct {
 }
 
 func newModel() *model {
-	help := help.New()
+	h := help.New()
 	textInput := textinput.New()
 	return &model{
-		help:            &help,
+		help:            &h,
 		persisted:       replicatedtodo.New(),
 		textInput:       &textInput,
 		acceptTextInput: nil,
@@ -359,9 +359,9 @@ func (m *model) viewNew() string {
 		if m.textInput.Focused() {
 			out.WriteString(m.textInput.View())
 		} else {
-			slog.Debug("m.help.View()")
-			help := m.help.View(keys)
-			helpHeight := lipgloss.Height(help)
+			slog.Debug("m.helpView.View()")
+			helpView := m.help.View(keys)
+			helpHeight := lipgloss.Height(helpView)
 
 			itemsHeight := m.windowHeight - helpHeight - 2
 
@@ -392,7 +392,7 @@ func (m *model) viewNew() string {
 				Height(itemsHeight).
 				Width(m.windowWidth - 2).
 				Render(itemsOut.String()))
-			out.WriteString(help)
+			out.WriteString(helpView)
 		}
 
 		style := lipgloss.NewStyle().
