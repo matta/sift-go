@@ -3,373 +3,186 @@ package main
 import (
 	"fmt"
 	"log"
-	"log/slog"
 	"os"
 	"path/filepath"
-	"slices"
-	"strings"
 
-	"github.com/charmbracelet/bubbles/help"
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/davecgh/go-spew/spew"
+	"github.com/gdamore/tcell/v2"
 	"github.com/ghodss/yaml"
-	"github.com/matta/sift/internal/replicatedtodo"
 )
 
-// Work around https://github.com/charmbracelet/bubbletea/issues/1036. This
-// code tickles the code path in lipgloss that asks termenv for the terminal's
-// background color.  Termenv memoizes the result, but there is some sort of
-// race condition that is avoided if this occurs in the very first call to
-// View().  In other words, if code executes in the 2nd call to View() it hangs.
-func workAroundIssue1036() {
-	_ = lipgloss.HasDarkBackground()
+type position struct {
+	col int
+	row int
 }
 
-type teaModel struct {
-	wrapped *model
+type extent struct {
+	width  int
+	height int
 }
 
-// Init implements tea.Model.
-func (outer *teaModel) Init() tea.Cmd {
-	slog.Debug("teaModel.Init()")
-	return nil
+type bounds struct {
+	position
+	extent
 }
 
-// Update implements tea.Model.
-func (outer *teaModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	slog.Debug(fmt.Sprintf("teaModel.Update: '%+v' ENTER", spew.Sdump(msg)))
-	cmd := outer.wrapped.update(msg)
-	slog.Debug(fmt.Sprintf("teaModel.Update: '%+v' LEAVE", spew.Sdump(msg)))
-	return outer, cmd
+func drawText(s tcell.Screen, b bounds, style tcell.Style, text string) position {
+	p := b.position
+	for _, r := range text {
+		if p.row >= b.row+b.height {
+			break
+		}
+		// TODO: handle word wrapping and wide chars properly.
+		s.SetContent(p.col, p.row, r, nil, style)
+		p.col++
+		if p.col >= b.col+b.width {
+			p = position{row: p.row + 1, col: b.col}
+		}
+	}
+	return p
 }
 
-// View implements tea.Model.
-func (outer *teaModel) View() string {
-	slog.Debug("View() ENTER")
-	out := outer.wrapped.view()
-	slog.Debug("View() LEAVE")
-	return out
+type todo struct {
+	Title string
+	Done  bool
 }
 
-type model struct {
-	help            *help.Model
-	persisted       *replicatedtodo.Model
-	textInput       *textinput.Model
-	acceptTextInput func(title string)
-	cursorID        string
-	keys            keyMap
-	windowWidth     int
-	windowHeight    int
-}
-
-func newModel() *model {
-	h := help.New()
-	textInput := textinput.New()
-	return &model{
-		keys:            mainScreenKeys(),
-		help:            &h,
-		persisted:       replicatedtodo.New(),
-		textInput:       &textInput,
-		acceptTextInput: nil,
-		cursorID:        "",
+func samples() []todo {
+	return []todo{
+		{Title: "todo 1", Done: true},
+		{Title: "todo 2", Done: false},
+		{Title: "todo 3", Done: true},
+		{Title: "todo 4", Done: false},
 	}
 }
 
-func (m *model) addSampleItems() {
-	m.newTodo("todo 1")
-	m.newTodo("todo 2")
+type model interface {
+	Update(screen tcell.Screen, event tcell.Event) model
+	Draw(s tcell.Screen)
 }
 
-// keyMap holds a set of keybindings. To work for help it must satisfy
-// key.Map. It could also very easily be a map[string]key.Binding.
-type keyMap struct {
-	Up     key.Binding
-	Down   key.Binding
-	Toggle key.Binding
-	Add    key.Binding
-	Edit   key.Binding
-	Help   key.Binding
-	Quit   key.Binding
-	Cancel key.Binding
-	Accept key.Binding
+type persistedModel struct {
+	Items    []todo
+	Cursor   int
+	Selected map[int]struct{}
 }
 
-// ShortHelp returns keybindings to be shown in the mini help view. It's part
-// of the key.Map interface.
-func (k *keyMap) ShortHelp() []key.Binding {
-	return []key.Binding{k.Help, k.Quit}
+type listModel struct {
+	persisted persistedModel
+	quit      bool
 }
 
-// FullHelp returns keybindings for the expanded help view. It's part of the
-// key.Map interface.
-func (k *keyMap) FullHelp() [][]key.Binding {
-	return [][]key.Binding{
-		{k.Up, k.Down, k.Toggle, k.Add}, // first column
-		{k.Help, k.Quit},                // second column
+func (m *listModel) Update(screen tcell.Screen, event tcell.Event) model {
+	switch event := event.(type) {
+	case *tcell.EventKey:
+		switch {
+		case event.Key() == tcell.KeyEscape ||
+			event.Key() == tcell.KeyCtrlC ||
+			(event.Key() == tcell.KeyRune && event.Rune() == 'q'):
+			m.quit = true
+		case event.Key() == tcell.KeyRune && event.Rune() == 'k':
+			if m.persisted.Cursor > 0 {
+				m.persisted.Cursor--
+			}
+		case event.Key() == tcell.KeyRune && event.Rune() == 'j':
+			if m.persisted.Cursor < len(m.persisted.Items)-1 {
+				m.persisted.Cursor++
+			}
+		case event.Key() == tcell.KeyRune && event.Rune() == 'x':
+			m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
+		case event.Key() == tcell.KeyRune && event.Rune() == 'a':
+			return &addModel{
+				list: m,
+			}
+		}
+	}
+	return m
+}
+
+func (m *listModel) Draw(s tcell.Screen) {
+	style := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
+	screenExtent := ScreenExtent(s)
+	for i, item := range m.persisted.Items {
+		cursor := " "
+		if i == m.persisted.Cursor {
+			cursor = ">"
+		}
+
+		done := " "
+		if m.persisted.Items[i].Done {
+			done = "x"
+		}
+
+		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title)
+		drawText(s, bounds{position{col: 0, row: i}, extent{width: screenExtent.width, height: 1}}, style, line)
 	}
 }
 
-func mainScreenKeys() keyMap {
-	return keyMap{
-		Up: key.NewBinding(
-			key.WithKeys("up", "k"),
-			key.WithHelp("↑/k", "move up"),
-		),
-		Down: key.NewBinding(
-			key.WithKeys("down", "j"),
-			key.WithHelp("↓/j", "move down"),
-		),
-		Toggle: key.NewBinding(
-			key.WithKeys("x"),
-			key.WithHelp("x", "toggle item"),
-		),
-		Add: key.NewBinding(
-			key.WithKeys("a"),
-			key.WithHelp("a", "add item"),
-		),
-		Edit: key.NewBinding(
-			key.WithKeys("e"),
-			key.WithHelp("e", "edit item"),
-		),
-		Help: key.NewBinding(
-			key.WithKeys("?"),
-			key.WithHelp("?", "toggle help"),
-		),
-		Quit: key.NewBinding(
-			key.WithKeys("q", "esc", "ctrl+c"),
-			key.WithHelp("q", "quit"),
-		),
-		Cancel: key.NewBinding(key.WithKeys("esc")),
-		Accept: key.NewBinding(
-			key.WithKeys("enter")),
-	}
-}
-
-func (m *model) newTodo(title string) {
-	m.persisted.NewTodo(title)
-}
-
-func (m *model) save() error {
-	bytes, err := yaml.Marshal(&m.persisted)
+func (m *listModel) Save() error {
+	b, err := yaml.Marshal(m.persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
-
-	permissions := 0o600
-	err = os.WriteFile(UserDataFile(), bytes, os.FileMode(permissions))
+	err = os.WriteFile(UserDataFile(), b, 0600)
 	if err != nil {
 		return fmt.Errorf("failed to save model: %w", err)
 	}
-
 	return nil
 }
 
-func updateTextInput(input *textinput.Model, msg tea.Msg) tea.Cmd {
-	temp, cmd := input.Update(msg)
-	*input = temp
-
-	return cmd
+type addModel struct {
+	list   *listModel
+	title  string
+	events []tcell.Event
 }
 
-func (m *model) update(msg tea.Msg) tea.Cmd {
-	switch msg := msg.(type) {
-	case tea.WindowSizeMsg:
-		// If we set a width on our sub-models, so they can respond as needed.
-		m.help.Width = msg.Width
-		m.textInput.Width = msg.Width
-		m.windowWidth = msg.Width
-		m.windowHeight = msg.Height
-	case tea.KeyMsg:
-		return m.handleKeyMsg(msg)
-	}
-
-	return nil
-}
-
-func (m *model) handleKeyMsg(msg tea.KeyMsg) tea.Cmd {
-	switch {
-	case m.textInput.Focused():
-		return m.handleFocusedTextInput(msg)
-	case key.Matches(msg, m.keys.Help):
-		m.help.ShowAll = !m.help.ShowAll
-	case key.Matches(msg, m.keys.Up):
-		m.cursorUp()
-	case key.Matches(msg, m.keys.Down):
-		m.cursorDown()
-	case key.Matches(msg, m.keys.Toggle):
-		m.toggle()
-	case key.Matches(msg, m.keys.Add):
-		return m.add()
-	case key.Matches(msg, m.keys.Edit):
-		return m.edit()
-	case key.Matches(msg, m.keys.Quit):
-		return tea.Quit
-	}
-
-	return nil
-}
-
-func (m *model) toggle() {
-	id := m.currentItem().ID
-	m.persisted.ToggleDone(id)
-	slog.Debug("persisted after toggling %s\n%s", id, m.persisted.DebugString())
-}
-
-func (m *model) add() tea.Cmd {
-	m.acceptTextInput = func(title string) {
-		m.newTodo(title)
-		m.disableTextInput()
-		m.acceptTextInput = nil
-	}
-
-	return m.textInput.Focus()
-}
-
-func (m *model) edit() tea.Cmd {
-	m.acceptTextInput = func(title string) {
-		if len(title) > 0 {
-			m.persisted.SetTitle(m.currentItem().ID, title)
-			m.disableTextInput()
+func (m *addModel) Update(screen tcell.Screen, event tcell.Event) model {
+	switch event := event.(type) {
+	case *tcell.EventKey:
+		m.events = append(m.events, event)
+		// If m.events has more than 5 elements remove the first one.
+		// TODO: Why? Looks like a hack to prevent unbounded type ahead?
+		for len(m.events) > 5 {
+			m.events = m.events[1:]
 		}
-
-		m.acceptTextInput = nil
-	}
-	m.textInput.SetValue(m.currentItem().Title)
-
-	return m.textInput.Focus()
-}
-
-func findID(items []replicatedtodo.Item, cursorID string) int {
-	index := slices.IndexFunc(items, func(item replicatedtodo.Item) bool {
-		return item.ID == cursorID
-	})
-
-	return index
-}
-
-func (m *model) currentItem() replicatedtodo.Item {
-	items := m.loadItems()
-	index := findID(items, m.cursorID)
-
-	return items[index]
-}
-
-func (m *model) cursorDown() {
-	items := m.loadItems()
-	index := findID(items, m.cursorID)
-
-	switch {
-	case len(items) == 0:
-		m.cursorID = ""
-	case index >= 0 && index < len(items)-1:
-		m.cursorID = items[index+1].ID
-	default:
-		m.cursorID = items[0].ID
-	}
-}
-
-func (m *model) cursorUp() {
-	items := m.loadItems()
-	index := findID(items, m.cursorID)
-
-	switch {
-	case len(items) == 0:
-		m.cursorID = ""
-	case index > 0:
-		m.cursorID = items[index-1].ID
-	default:
-		m.cursorID = items[len(items)-1].ID
-	}
-}
-
-func (m *model) handleFocusedTextInput(msg tea.KeyMsg) tea.Cmd {
-	switch {
-	case key.Matches(msg, m.keys.Cancel):
-		m.disableTextInput()
-	case key.Matches(msg, m.keys.Accept):
-		m.accept()
-	default:
-		return updateTextInput(m.textInput, msg)
-	}
-
-	return nil
-}
-
-func (m *model) accept() {
-	m.acceptTextInput(m.textInput.Value())
-	m.acceptTextInput = nil
-	m.disableTextInput()
-}
-
-func (m *model) disableTextInput() {
-	m.textInput.Reset()
-	m.textInput.Blur()
-}
-
-func (m *model) view() string {
-	if m.windowWidth == 0 || m.windowHeight == 0 {
-		return ""
-	}
-	var out strings.Builder
-	borderWidth := 1
-	borderCount := 2
-	borderInset := borderWidth * borderCount
-	if m.textInput.Focused() {
-		out.WriteString(m.textInput.View())
-	} else {
-		slog.Debug("m.helpView.View()")
-		helpView := m.help.View(&m.keys)
-		helpHeight := lipgloss.Height(helpView)
-		itemsHeight := m.windowHeight - helpHeight - borderInset
-		var itemsOut strings.Builder
-		items := m.loadItems()
-		for i, item := range items {
-			if i > itemsHeight {
-				break
+		switch {
+		case event.Key() == tcell.KeyEscape || event.Key() == tcell.KeyCtrlC:
+			return m.list
+		case event.Key() == tcell.KeyBackspace || event.Key() == tcell.KeyBackspace2:
+			// Remove the last rune from m.title
+			if len(m.title) > 0 {
+				m.title = m.title[:len(m.title)-1]
 			}
-			cursor := " "
-			if item.ID == m.cursorID {
-				cursor = ">"
-			}
-			done := " "
-			if item.State == "checked" {
-				done = "x"
-			}
-			itemsOut.WriteString(fmt.Sprintf("%s [%s] %s\n", cursor, done, item.Title))
+		case event.Key() == tcell.KeyRune:
+			m.title += string(event.Rune())
+		case event.Key() == tcell.KeyEnter:
+			m.list.persisted.Items = append(m.list.persisted.Items, todo{Title: m.title, Done: false})
+			return m.list
 		}
-		itemsOut.WriteString("\n")
-		backgroundColor := lipgloss.AdaptiveColor{
-			Light: "#0000ff",
-			Dark:  "#000099",
-		}
-		out.WriteString(
-			lipgloss.NewStyle().
-				Background(backgroundColor).
-				Height(itemsHeight).
-				Width(m.windowWidth - borderInset).
-				Render(itemsOut.String()))
-		out.WriteString(helpView)
 	}
-	style := lipgloss.NewStyle().
-		Width(m.windowWidth - borderInset).
-		Height(m.windowHeight - borderInset).
-		BorderStyle(lipgloss.NormalBorder())
-	return style.Render(out.String())
+	return m
 }
 
-func (m *model) loadItems() []replicatedtodo.Item {
-	items := m.persisted.GetAllItems()
-	items = slices.DeleteFunc(items, func(item replicatedtodo.Item) bool {
-		return item.State == "removed"
-	})
-	slices.SortFunc(items, func(i, j replicatedtodo.Item) int {
-		return strings.Compare(i.ID, j.ID)
-	})
+func ScreenExtent(s tcell.Screen) extent {
+	width, height := s.Size()
+	return extent{width: width, height: height}
+}
 
-	return items
+func (m *addModel) Draw(s tcell.Screen) {
+	screenSize := ScreenExtent(s)
+	line := fmt.Sprintf("Add new todo with title: %s", m.title)
+	p := drawText(s, bounds{position{0, 0}, screenSize}, tcell.StyleDefault, line)
+	s.ShowCursor(p.col, p.row)
+
+	for _, e := range m.events {
+		if p.col != 0 {
+			p.col = 0
+			p.row++
+		}
+		extent := screenSize
+		extent.height -= p.row
+		end := drawText(s, bounds{p, extent}, tcell.StyleDefault, fmt.Sprintf("%+v", e))
+		p.row = end.row
+	}
 }
 
 func UserHomeDir() string {
@@ -377,7 +190,6 @@ func UserHomeDir() string {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	return usr
 }
 
@@ -385,75 +197,78 @@ func UserDataFile() string {
 	return filepath.Join(UserHomeDir(), ".sift.yaml")
 }
 
-func loadModel() *teaModel {
-	model := loadPersistedModel()
-
-	return &teaModel{model}
+func InitialModel() listModel {
+	return listModel{
+		persisted: persistedModel{
+			Items:    samples(),
+			Selected: make(map[int]struct{}),
+		},
+	}
 }
 
-func loadPersistedModel() *model {
-	model := newModel()
+func LoadModel() listModel {
+	m := InitialModel()
 
-	bytes, err := os.ReadFile(UserDataFile())
+	b, err := os.ReadFile(UserDataFile())
 	if err != nil {
 		log.Printf("Failed to read model file: %v", err)
-		model.addSampleItems()
-
-		return model
+		return m
 	}
 
-	var replicatedModel replicatedtodo.Model
-	if err = yaml.Unmarshal(bytes, &replicatedModel); err != nil {
+	var p persistedModel
+	err = yaml.Unmarshal(b, &p)
+	if err != nil {
 		log.Printf("Failed to unmarshal model file: %v", err)
-		model.addSampleItems()
-
-		return model
+		return m
 	}
 
-	model.persisted = &replicatedModel
-
-	return model
-}
-
-func setUpLogging() *os.File {
-	logfilePath := os.Getenv("SIFT_LOGFILE")
-	if logfilePath != "" {
-		file, err := tea.LogToFileWith(logfilePath, "sift", log.Default())
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "error logging to file: %s\n", err)
-			os.Exit(1)
-		}
-
-		log.Default().SetFlags(log.LstdFlags | log.Lmicroseconds | log.Llongfile)
-
-		return file
-	}
-
-	return nil
+	m.persisted = p
+	return m
 }
 
 func main() {
-	workAroundIssue1036()
+	listModel := LoadModel()
+	var model model = &listModel
 
-	logFile := setUpLogging()
-	defer func() {
-		if logFile != nil {
-			_ = logFile.Close()
-		}
-	}()
-	slog.Info("program started")
-
-	teaModel := loadModel()
-
-	program := tea.NewProgram(teaModel, tea.WithAltScreen())
-	_, err := program.Run()
+	s, err := tcell.NewScreen()
 	if err != nil {
-		slog.Error("Error running program", slog.Any("error", err))
+		log.Fatal(err)
+	}
+	if err := s.Init(); err != nil {
+		log.Fatal(err)
 	}
 
-	if err = teaModel.wrapped.save(); err != nil {
-		slog.Error("Error saving", slog.Any("error", err))
-	}
+	// Set default text style
+	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
+	s.SetStyle(defStyle)
 
-	slog.Debug("program exiting")
+	s.Clear()
+
+	wasResize := false
+	for !listModel.quit {
+		// Update screen
+		s.Clear()
+		model.Draw(s)
+		if wasResize {
+			s.Sync()
+			wasResize = false
+		} else {
+			s.Show()
+		}
+
+		// Poll event
+		ev := s.PollEvent()
+
+		// Process event
+		switch ev.(type) {
+		case *tcell.EventResize:
+			wasResize = true
+		}
+		model = model.Update(s, ev)
+	}
+	s.Fini()
+	if err := listModel.Save(); err != nil {
+		panic(err)
+	}
+	os.Exit(0)
 }
