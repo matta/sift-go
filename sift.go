@@ -107,7 +107,7 @@ func (m *listModel) Draw(s tcell.Screen) {
 			done = "x"
 		}
 
-		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title)
+		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title.Value)
 		drawText(s, bounds{position{col: 0, row: row}, extent{width: screenExtent.width, height: 1}}, style, line)
 		row += 1
 	}
