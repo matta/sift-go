@@ -268,6 +268,7 @@ func main() {
 	if err := s.Init(); err != nil {
 		log.Fatal(err)
 	}
+	defer s.Fini()
 
 	// Set default text style
 	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
@@ -297,7 +298,6 @@ func main() {
 		}
 		model = model.Update(s, ev)
 	}
-	s.Fini()
 	if err := listModel.Save(); err != nil {
 		slog.Error("Error saving", slog.Any("error", err))
 	}
