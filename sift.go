@@ -3,11 +3,14 @@ package main
 import (
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 
+	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gdamore/tcell/v2"
 	"github.com/ghodss/yaml"
+	"github.com/matta/sift/internal/replicatedtodo"
 )
 
 type position struct {
@@ -41,34 +44,21 @@ func drawText(s tcell.Screen, b bounds, style tcell.Style, text string) position
 	return p
 }
 
-type todo struct {
-	Title string
-	Done  bool
-}
-
-func samples() []todo {
-	return []todo{
-		{Title: "todo 1", Done: true},
-		{Title: "todo 2", Done: false},
-		{Title: "todo 3", Done: true},
-		{Title: "todo 4", Done: false},
-	}
-}
-
 type model interface {
 	Update(screen tcell.Screen, event tcell.Event) model
 	Draw(s tcell.Screen)
 }
 
-type persistedModel struct {
-	Items    []todo
-	Cursor   int
-	Selected map[int]struct{}
+type listModel struct {
+	Selected  map[string]struct{}
+	persisted replicatedtodo.Model
+	cursor    string
+	quit      bool
 }
 
-type listModel struct {
-	persisted persistedModel
-	quit      bool
+func (m *listModel) addSampleItems() {
+	m.newTodo("todo 1")
+	m.newTodo("todo 2")
 }
 
 func (m *listModel) Update(screen tcell.Screen, event tcell.Event) model {
@@ -80,15 +70,18 @@ func (m *listModel) Update(screen tcell.Screen, event tcell.Event) model {
 			(event.Key() == tcell.KeyRune && event.Rune() == 'q'):
 			m.quit = true
 		case event.Key() == tcell.KeyRune && event.Rune() == 'k':
-			if m.persisted.Cursor > 0 {
-				m.persisted.Cursor--
-			}
+			// if m.persisted.Cursor > 0 {
+			// 	m.persisted.Cursor--
+			// }
+			panic("write me")
 		case event.Key() == tcell.KeyRune && event.Rune() == 'j':
-			if m.persisted.Cursor < len(m.persisted.Items)-1 {
-				m.persisted.Cursor++
-			}
+			// if m.persisted.Cursor < len(m.persisted.Items)-1 {
+			// 	m.persisted.Cursor++
+			// }
+			panic("write me")
 		case event.Key() == tcell.KeyRune && event.Rune() == 'x':
-			m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
+			panic("write me")
+			// m.persisted.Items[m.persisted.Cursor].Done = !m.persisted.Items[m.persisted.Cursor].Done
 		case event.Key() == tcell.KeyRune && event.Rune() == 'a':
 			return &addModel{
 				list: m,
@@ -101,31 +94,39 @@ func (m *listModel) Update(screen tcell.Screen, event tcell.Event) model {
 func (m *listModel) Draw(s tcell.Screen) {
 	style := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
 	screenExtent := ScreenExtent(s)
-	for i, item := range m.persisted.Items {
+	row := 0
+	for id, item := range m.persisted.Items {
 		cursor := " "
-		if i == m.persisted.Cursor {
+		if id == m.cursor {
 			cursor = ">"
 		}
 
 		done := " "
-		if m.persisted.Items[i].Done {
+		// TODO: use a constant for this state value
+		if m.persisted.Items[id].State.Value == "completed" {
 			done = "x"
 		}
 
 		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title)
-		drawText(s, bounds{position{col: 0, row: i}, extent{width: screenExtent.width, height: 1}}, style, line)
+		drawText(s, bounds{position{col: 0, row: row}, extent{width: screenExtent.width, height: 1}}, style, line)
+		row += 1
 	}
 }
 
+func (m *listModel) newTodo(title string) {
+	m.persisted.NewTodo(title)
+}
+
 func (m *listModel) Save() error {
-	b, err := yaml.Marshal(m.persisted)
+	bytes, err := yaml.Marshal(m.persisted)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
-	err = os.WriteFile(UserDataFile(), b, 0600)
+	err = os.WriteFile(UserDataFile(), bytes, os.FileMode(0600))
 	if err != nil {
 		return fmt.Errorf("failed to save model: %w", err)
 	}
+
 	return nil
 }
 
@@ -155,8 +156,9 @@ func (m *addModel) Update(screen tcell.Screen, event tcell.Event) model {
 		case event.Key() == tcell.KeyRune:
 			m.title += string(event.Rune())
 		case event.Key() == tcell.KeyEnter:
-			m.list.persisted.Items = append(m.list.persisted.Items, todo{Title: m.title, Done: false})
-			return m.list
+			panic("write me")
+			// m.list.persisted.Items = append(m.list.persisted.Items, todo{Title: m.title, Done: false})
+			// return m.list
 		}
 	}
 	return m
@@ -190,6 +192,7 @@ func UserHomeDir() string {
 	if err != nil {
 		log.Fatal(err)
 	}
+
 	return usr
 }
 
@@ -197,36 +200,64 @@ func UserDataFile() string {
 	return filepath.Join(UserHomeDir(), ".sift.yaml")
 }
 
-func InitialModel() listModel {
+func NewModel() listModel {
 	return listModel{
-		persisted: persistedModel{
-			Items:    samples(),
-			Selected: make(map[int]struct{}),
-		},
+		cursor:    "",
+		Selected:  map[string]struct{}{},
+		persisted: replicatedtodo.Model{},
+		quit:      false,
 	}
 }
 
 func LoadModel() listModel {
-	m := InitialModel()
+	model := NewModel()
 
-	b, err := os.ReadFile(UserDataFile())
+	bytes, err := os.ReadFile(UserDataFile())
 	if err != nil {
 		log.Printf("Failed to read model file: %v", err)
-		return m
+		return model
 	}
 
-	var p persistedModel
-	err = yaml.Unmarshal(b, &p)
-	if err != nil {
+	var replicatedModel replicatedtodo.Model
+	if err = yaml.Unmarshal(bytes, &replicatedModel); err != nil {
 		log.Printf("Failed to unmarshal model file: %v", err)
-		return m
+		model.addSampleItems()
+
+		return model
 	}
 
-	m.persisted = p
-	return m
+	model.persisted = replicatedModel
+
+	return model
+}
+
+func setUpLogging() *os.File {
+	logfilePath := os.Getenv("SIFT_LOGFILE")
+	if logfilePath != "" {
+		// TODO: this one function is all we use from bubbletea. Cut this dependency.
+		file, err := tea.LogToFileWith(logfilePath, "sift", log.Default())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error logging to file: %s\n", err)
+			os.Exit(1)
+		}
+
+		log.Default().SetFlags(log.LstdFlags | log.Lmicroseconds | log.Llongfile)
+
+		return file
+	}
+
+	return nil
 }
 
 func main() {
+	logFile := setUpLogging()
+	defer func() {
+		if logFile != nil {
+			_ = logFile.Close()
+		}
+	}()
+	slog.Info("program started")
+
 	listModel := LoadModel()
 	var model model = &listModel
 
@@ -268,7 +299,8 @@ func main() {
 	}
 	s.Fini()
 	if err := listModel.Save(); err != nil {
-		panic(err)
+		slog.Error("Error saving", slog.Any("error", err))
 	}
-	os.Exit(0)
+
+	slog.Debug("program exiting")
 }

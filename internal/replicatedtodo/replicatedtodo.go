@@ -14,7 +14,7 @@ import (
 //
 // Initial design inspired from https://adamreeve.co.nz/blog/todo-crdt.html
 type Model struct {
-	// This is a "grow only set" (G-Set) of items.
+	// This is a "grow only set" (G-Set) of items, keyed by UUID.
 	Items map[string]*PersistedItem
 }
 
