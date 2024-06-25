@@ -7,9 +7,9 @@ import (
 	"os"
 	"path/filepath"
 
-	tea "github.com/charmbracelet/bubbletea"
 	"github.com/gdamore/tcell/v2"
 	"github.com/ghodss/yaml"
+	"github.com/matta/sift/internal/loghelp"
 	"github.com/matta/sift/internal/replicatedtodo"
 )
 
@@ -235,7 +235,7 @@ func setUpLogging() *os.File {
 	logfilePath := os.Getenv("SIFT_LOGFILE")
 	if logfilePath != "" {
 		// TODO: this one function is all we use from bubbletea. Cut this dependency.
-		file, err := tea.LogToFileWith(logfilePath, "sift", log.Default())
+		file, err := loghelp.LogToFileWith(logfilePath, "sift", log.Default())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error logging to file: %s\n", err)
 			os.Exit(1)
