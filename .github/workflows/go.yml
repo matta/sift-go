@@ -20,6 +20,9 @@ jobs:
         with:
           go-version: '<2'
 
+      - name: Vet
+        run: go vet ./...
+
       - name: Build
         run: go build -v ./...
 
