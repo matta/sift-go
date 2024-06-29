@@ -5,6 +5,7 @@ import (
 	"cmp"
 	"encoding/json"
 	"fmt"
+	"log"
 	"log/slog"
 	"maps"
 	"math/big"
@@ -12,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/log" // TODO: remove this dependency
 	"github.com/google/uuid"
 )
 
