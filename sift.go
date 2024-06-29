@@ -9,6 +9,7 @@ import (
 
 	"github.com/gdamore/tcell/v2"
 	"github.com/ghodss/yaml"
+	"github.com/google/uuid"
 	"github.com/matta/sift/internal/loghelp"
 	"github.com/matta/sift/internal/replicatedtodo"
 )
@@ -50,10 +51,10 @@ type model interface {
 }
 
 type listModel struct {
-	Selected  map[string]struct{}
-	persisted replicatedtodo.Model
-	cursor    string
-	quit      bool
+	selected map[string]struct{}
+	items    replicatedtodo.Model
+	cursor   *uuid.UUID
+	quit     bool
 }
 
 func (m *listModel) addSampleItems() {
@@ -94,31 +95,39 @@ func (m *listModel) Update(screen tcell.Screen, event tcell.Event) model {
 func (m *listModel) Draw(s tcell.Screen) {
 	style := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
 	screenExtent := ScreenExtent(s)
+
+	// If the cursor isn't valid take a random item from the item set.
+	if m.cursor == nil {
+		for _, item := range m.items.AllItems() {
+			m.cursor = &item.ID
+		}
+	}
+
 	row := 0
-	for id, item := range m.persisted.Items {
+	for _, item := range m.items.AllItems() {
 		cursor := " "
-		if id == m.cursor {
+		if item.ID == *m.cursor {
 			cursor = ">"
 		}
 
 		done := " "
 		// TODO: use a constant for this state value
-		if m.persisted.Items[id].State.Value == "completed" {
+		if item.State == "completed" {
 			done = "x"
 		}
 
-		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title.Value)
+		line := fmt.Sprintf("%s [%s] %s", cursor, done, item.Title)
 		drawText(s, bounds{position{col: 0, row: row}, extent{width: screenExtent.width, height: 1}}, style, line)
 		row += 1
 	}
 }
 
 func (m *listModel) newTodo(title string) {
-	m.persisted.NewTodo(title)
+	m.items.NewTodo(title)
 }
 
 func (m *listModel) Save() error {
-	bytes, err := yaml.Marshal(m.persisted)
+	bytes, err := yaml.Marshal(m.items)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
@@ -202,39 +211,38 @@ func UserDataFile() string {
 
 func NewModel() listModel {
 	return listModel{
-		cursor:    "",
-		Selected:  map[string]struct{}{},
-		persisted: replicatedtodo.Model{},
-		quit:      false,
+		cursor:   nil,
+		selected: map[string]struct{}{},
+		items:    replicatedtodo.Model{},
+		quit:     false,
 	}
 }
 
 func LoadModel() listModel {
-	model := NewModel()
-
 	bytes, err := os.ReadFile(UserDataFile())
 	if err != nil {
 		log.Printf("Failed to read model file: %v", err)
-		return model
-	}
-
-	var replicatedModel replicatedtodo.Model
-	if err = yaml.Unmarshal(bytes, &replicatedModel); err != nil {
-		log.Printf("Failed to unmarshal model file: %v", err)
+		model := NewModel()
 		model.addSampleItems()
-
 		return model
 	}
 
-	model.persisted = replicatedModel
+	var items replicatedtodo.Model
+	if err = yaml.Unmarshal(bytes, &items); err != nil {
+		log.Printf("Failed to unmarshal model file: %v", err)
+		model := NewModel()
+		model.addSampleItems()
+		return model
+	}
 
+	model := NewModel()
+	model.items = items
 	return model
 }
 
 func setUpLogging() *os.File {
 	logfilePath := os.Getenv("SIFT_LOGFILE")
 	if logfilePath != "" {
-		// TODO: this one function is all we use from bubbletea. Cut this dependency.
 		file, err := loghelp.LogToFileWith(logfilePath, "sift", log.Default())
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "error logging to file: %s\n", err)
@@ -259,6 +267,7 @@ func main() {
 	slog.Info("program started")
 
 	listModel := LoadModel()
+	slog.Info("Loaded model", slog.Any("model", listModel))
 	var model model = &listModel
 
 	s, err := tcell.NewScreen()

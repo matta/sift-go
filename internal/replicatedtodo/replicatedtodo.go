@@ -2,20 +2,69 @@
 package replicatedtodo
 
 import (
+	"cmp"
+	"encoding/json"
 	"fmt"
+	"log/slog"
+	"maps"
+	"math/big"
+	"slices"
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/log"
+	"github.com/charmbracelet/log" // TODO: remove this dependency
 	"github.com/google/uuid"
 )
 
-// Model is a collection of CRTDs used to store a synchronized set of items.
+type Model struct {
+	replicated PersistedModel
+}
+
+func (m *Model) AllItems() []Item {
+	var items []Item
+	for v := range maps.Values(m.replicated.Items) {
+		items = append(items, v.Item())
+	}
+	slices.SortFunc(items, func(i, j Item) int {
+		slog.Warn("sort by more than ID here")
+		return cmp.Compare(i.ID.String(), j.ID.String())
+	})
+	return items
+}
+
+func (m *Model) NewTodo(title string) Item {
+	id := m.replicated.NewTodo(title)
+	return m.replicated.GetItem(id)
+}
+
+// MarshalJSON implements the json.Marshaller interface
+func (m *Model) MarshalJSON() ([]byte, error) {
+	bytes, err := json.Marshal(m.replicated)
+	return bytes, err
+}
+
+// UnmarshalJSON implements the json.Unmarshaller interface
+func (m *Model) UnmarshalJSON(bytes []byte) error {
+	var replicated PersistedModel
+	if err := json.Unmarshal(bytes, &replicated); err != nil {
+		return err
+	}
+	m.replicated = replicated
+	return nil
+}
+
+type Item struct {
+	Title string
+	State string
+	ID    uuid.UUID
+}
+
+// PersistedModel is a collection of CRTDs used to store a synchronized set of items.
 //
 // Initial design inspired from https://adamreeve.co.nz/blog/todo-crdt.html
-type Model struct {
+type PersistedModel struct {
 	// This is a "grow only set" (G-Set) of items, keyed by UUID.
-	Items map[string]*PersistedItem
+	Items map[uuid.UUID]*PersistedItem
 }
 
 type PersistedString struct {
@@ -30,6 +79,8 @@ func newPersistedString(value string) PersistedString {
 type PersistedItem struct {
 	Title PersistedString
 	State PersistedString
+	Order big.Rat
+	ID    uuid.UUID
 }
 
 func (i *PersistedItem) DebugString() any {
@@ -37,22 +88,28 @@ func (i *PersistedItem) DebugString() any {
 }
 
 func newPersistedItem(title string) *PersistedItem {
-	return &PersistedItem{Title: newPersistedString(title), State: newPersistedString("unchecked")}
+	uuid, err := uuid.NewV7()
+	if err != nil {
+		log.Fatalf("Can't generate UUID: %v", err)
+	}
+	return &PersistedItem{Title: newPersistedString(title), State: newPersistedString("unchecked"), ID: uuid}
 }
 
-type Item struct {
-	ID    string
-	Title string
-	State string
-}
-
-func New() *Model {
-	return &Model{
-		Items: make(map[string]*PersistedItem),
+func (i *PersistedItem) Item() Item {
+	return Item{
+		Title: i.Title.Value,
+		State: i.State.Value,
+		ID:    i.ID,
 	}
 }
 
-func (model *Model) GetItem(id string) Item {
+func New() *PersistedModel {
+	return &PersistedModel{
+		Items: make(map[uuid.UUID]*PersistedItem),
+	}
+}
+
+func (model *PersistedModel) GetItem(id uuid.UUID) Item {
 	item := model.getItem(id)
 
 	return Item{
@@ -62,7 +119,7 @@ func (model *Model) GetItem(id string) Item {
 	}
 }
 
-func (model *Model) GetAllItems() []Item {
+func (model *PersistedModel) GetAllItems() []Item {
 	items := make([]Item, 0, len(model.Items))
 
 	for id, item := range model.Items {
@@ -76,27 +133,29 @@ func (model *Model) GetAllItems() []Item {
 	return items
 }
 
-func (model *Model) NewTodo(title string) string {
+func (model *PersistedModel) NewTodo(title string) uuid.UUID {
 	id, err := uuid.NewV7()
 	if err != nil {
 		log.Fatalf("Can't generate UUID: %v", err)
 	}
 
-	idStr := id.String()
-	model.Items[idStr] = newPersistedItem(title)
+	if model.Items == nil {
+		model.Items = make(map[uuid.UUID]*PersistedItem)
+	}
+	model.Items[id] = newPersistedItem(title)
 
-	return idStr
+	return id
 }
 
-func (model *Model) getItem(id string) *PersistedItem {
+func (model *PersistedModel) getItem(id uuid.UUID) *PersistedItem {
 	return model.Items[id]
 }
 
-func (model *Model) GetState(id string) string {
+func (model *PersistedModel) GetState(id uuid.UUID) string {
 	return model.getItem(id).State.Value
 }
 
-func (model *Model) ToggleDone(id string) {
+func (model *PersistedModel) ToggleDone(id uuid.UUID) {
 	item := model.getItem(id)
 	switch item.State.Value {
 	case "unchecked":
@@ -106,11 +165,11 @@ func (model *Model) ToggleDone(id string) {
 	}
 }
 
-func (model *Model) SetTitle(id string, title string) {
+func (model *PersistedModel) SetTitle(id uuid.UUID, title string) {
 	model.getItem(id).Title = newPersistedString(title)
 }
 
-func (model *Model) DebugString() string {
+func (model *PersistedModel) DebugString() string {
 	var builder strings.Builder
 
 	builder.WriteString(fmt.Sprintf("Model @%p\n", model))
@@ -119,4 +178,11 @@ func (model *Model) DebugString() string {
 	}
 
 	return builder.String()
+}
+
+func (model *PersistedModel) Model() Model {
+	return Model{
+		// TODO: deep clone?
+		replicated: *model,
+	}
 }

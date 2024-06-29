@@ -1,13 +1,11 @@
-package replicatedtodo_test
+package replicatedtodo
 
 import (
 	"testing"
-
-	"github.com/matta/sift/internal/replicatedtodo"
 )
 
 func TestModel_NewTodo(t *testing.T) {
-	model := replicatedtodo.New()
+	model := New()
 	model.NewTodo("hello")
 
 	if len(model.Items) != 1 {
@@ -16,7 +14,7 @@ func TestModel_NewTodo(t *testing.T) {
 }
 
 func TestNew(t *testing.T) {
-	got := replicatedtodo.New()
+	got := New()
 	if got.Items == nil {
 		t.Errorf("New() = %v, want non-nil Items", got)
 	}
