@@ -284,7 +284,9 @@ func main() {
 	defer s.Fini()
 
 	// Set default text style
-	defStyle := tcell.StyleDefault.Background(tcell.ColorReset).Foreground(tcell.ColorReset)
+	defStyle := tcell.StyleDefault.
+		Background(tcell.ColorReset).
+		Foreground(tcell.ColorReset)
 	s.SetStyle(defStyle)
 
 	s.Clear()
