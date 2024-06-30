@@ -1,7 +1,6 @@
 package replicatedtodo
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -54,7 +53,6 @@ func TestNewTodo(t *testing.T) {
 		t.Errorf("NewTodo(\"title a\") mismatch (-want, +got):\n%s", diff)
 	}
 
-	fmt.Println("ADD ITEM C")
 	item_c, err := list.NewTodo("title c", item_a.ID)
 	if err != nil {
 		t.Fatalf("error creating todo: %s", err)
