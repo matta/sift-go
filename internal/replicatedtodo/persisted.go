@@ -34,7 +34,7 @@ func newPersistedString(value string) PersistedString {
 type PersistedItem struct {
 	Title PersistedString
 	State PersistedString
-	Order big.Rat
+	Order *big.Rat
 	ID    uuid.UUID
 }
 
@@ -55,9 +55,9 @@ func newPersistedItem(title string, order *big.Rat) (*PersistedItem, error) {
 	item := &PersistedItem{
 		Title: newPersistedString(title),
 		State: newPersistedString("unchecked"),
+		Order: order,
 		ID:    id,
 	}
-	item.Order.Set(order)
 	return item, nil
 }
 
@@ -91,7 +91,7 @@ func (model *PersistedModel) sorted() []*PersistedItem {
 		items = append(items, v)
 	}
 	slices.SortFunc(items, func(i, j *PersistedItem) int {
-		c := i.Order.Cmp(&j.Order)
+		c := i.Order.Cmp(j.Order)
 		if c != 0 {
 			return c
 		}

@@ -34,17 +34,16 @@ func (m *ItemList) NewTodo(title string, previous uuid.UUID) (*Item, error) {
 	})
 	var order big.Rat
 	if previousIndex >= 0 {
-		order.Set(&items[previousIndex].Order)
+		order.Set(items[previousIndex].Order)
 	}
 	if previousIndex+1 < len(items) {
-		high := &items[previousIndex+1].Order
-		order.Add(&order, high)
+		order.Add(&order, items[previousIndex+1].Order)
 	} else {
 		order.Add(&order, big.NewRat(1, 1))
 	}
 	order.Quo(&order, big.NewRat(2, 1))
 
-	id, err := m.replicated.NewTodo(title, order)
+	id, err := m.replicated.NewTodo(title, &order)
 	if err != nil {
 		return nil, err
 	}
