@@ -52,7 +52,7 @@ type model interface {
 
 type listModel struct {
 	selected map[string]struct{}
-	items    replicatedtodo.Model
+	items    replicatedtodo.ItemList
 	cursor   *uuid.UUID
 	quit     bool
 }
@@ -98,13 +98,13 @@ func (m *listModel) Draw(s tcell.Screen) {
 
 	// If the cursor isn't valid take a random item from the item set.
 	if m.cursor == nil {
-		for _, item := range m.items.AllItems() {
+		for _, item := range m.items.Items() {
 			m.cursor = &item.ID
 		}
 	}
 
 	row := 0
-	for _, item := range m.items.AllItems() {
+	for _, item := range m.items.Items() {
 		cursor := " "
 		if item.ID == *m.cursor {
 			cursor = ">"
@@ -123,11 +123,15 @@ func (m *listModel) Draw(s tcell.Screen) {
 }
 
 func (m *listModel) newTodo(title string) {
-	m.items.NewTodo(title)
+	var previous uuid.UUID
+	if m.cursor != nil {
+		previous = *m.cursor
+	}
+	m.items.NewTodo(title, previous)
 }
 
 func (m *listModel) Save() error {
-	bytes, err := yaml.Marshal(m.items)
+	bytes, err := yaml.Marshal(&m.items)
 	if err != nil {
 		return fmt.Errorf("failed to marshal model: %w", err)
 	}
@@ -213,7 +217,7 @@ func NewModel() listModel {
 	return listModel{
 		cursor:   nil,
 		selected: map[string]struct{}{},
-		items:    replicatedtodo.Model{},
+		items:    replicatedtodo.ItemList{},
 		quit:     false,
 	}
 }
@@ -227,7 +231,7 @@ func LoadModel() listModel {
 		return model
 	}
 
-	var items replicatedtodo.Model
+	var items replicatedtodo.ItemList
 	if err = yaml.Unmarshal(bytes, &items); err != nil {
 		log.Printf("Failed to unmarshal model file: %v", err)
 		model := NewModel()

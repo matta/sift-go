@@ -2,11 +2,9 @@
 package replicatedtodo
 
 import (
-	"cmp"
-	"encoding/json"
+	"bytes"
+	"errors"
 	"fmt"
-	"log"
-	"log/slog"
 	"maps"
 	"math/big"
 	"slices"
@@ -15,49 +13,6 @@ import (
 
 	"github.com/google/uuid"
 )
-
-type Model struct {
-	replicated PersistedModel
-}
-
-func (m *Model) AllItems() []Item {
-	var items []Item
-	for v := range maps.Values(m.replicated.Items) {
-		items = append(items, v.Item())
-	}
-	slices.SortFunc(items, func(i, j Item) int {
-		slog.Warn("sort by more than ID here")
-		return cmp.Compare(i.ID.String(), j.ID.String())
-	})
-	return items
-}
-
-func (m *Model) NewTodo(title string) Item {
-	id := m.replicated.NewTodo(title)
-	return m.replicated.GetItem(id)
-}
-
-// MarshalJSON implements the json.Marshaller interface
-func (m *Model) MarshalJSON() ([]byte, error) {
-	bytes, err := json.Marshal(m.replicated)
-	return bytes, err
-}
-
-// UnmarshalJSON implements the json.Unmarshaller interface
-func (m *Model) UnmarshalJSON(bytes []byte) error {
-	var replicated PersistedModel
-	if err := json.Unmarshal(bytes, &replicated); err != nil {
-		return err
-	}
-	m.replicated = replicated
-	return nil
-}
-
-type Item struct {
-	Title string
-	State string
-	ID    uuid.UUID
-}
 
 // PersistedModel is a collection of CRTDs used to store a synchronized set of items.
 //
@@ -83,16 +38,27 @@ type PersistedItem struct {
 	ID    uuid.UUID
 }
 
-func (i *PersistedItem) DebugString() any {
-	return fmt.Sprintf("PersistedItem @%p title=%q state=%q", i, i.Title, i.State)
+func (i *PersistedItem) String() string {
+	return fmt.Sprintf("PersistedItem @%p title=%q state=%q order=%d/%d id=%q",
+		i, i.Title, i.State, i.Order.Num(), i.Order.Denom(), i.ID.String())
 }
 
-func newPersistedItem(title string) *PersistedItem {
-	uuid, err := uuid.NewV7()
-	if err != nil {
-		log.Fatalf("Can't generate UUID: %v", err)
+func newPersistedItem(title string, order *big.Rat) (*PersistedItem, error) {
+	if big.NewRat(0, 1).Cmp(order) != -1 || order.Cmp(big.NewRat(1, 1)) != -1 {
+		return nil, errors.New("Order out of range, need (0..1) (non-inclusive)")
 	}
-	return &PersistedItem{Title: newPersistedString(title), State: newPersistedString("unchecked"), ID: uuid}
+	id, err := uuid.NewV7()
+	if err != nil {
+		return nil, err
+	}
+
+	item := &PersistedItem{
+		Title: newPersistedString(title),
+		State: newPersistedString("unchecked"),
+		ID:    id,
+	}
+	item.Order.Set(order)
+	return item, nil
 }
 
 func (i *PersistedItem) Item() Item {
@@ -109,14 +75,32 @@ func New() *PersistedModel {
 	}
 }
 
-func (model *PersistedModel) GetItem(id uuid.UUID) Item {
+func (model *PersistedModel) GetItem(id uuid.UUID) *Item {
 	item := model.getItem(id)
 
-	return Item{
+	return &Item{
 		ID:    id,
 		Title: item.Title.Value,
 		State: item.State.Value,
 	}
+}
+
+func (model *PersistedModel) sorted() []*PersistedItem {
+	var items []*PersistedItem
+	for v := range maps.Values(model.Items) {
+		items = append(items, v)
+	}
+	slices.SortFunc(items, func(i, j *PersistedItem) int {
+		c := i.Order.Cmp(&j.Order)
+		if c != 0 {
+			return c
+		}
+		var a, b [16]byte
+		a = i.ID
+		b = j.ID
+		return bytes.Compare(a[:], b[:])
+	})
+	return items
 }
 
 func (model *PersistedModel) GetAllItems() []Item {
@@ -133,18 +117,18 @@ func (model *PersistedModel) GetAllItems() []Item {
 	return items
 }
 
-func (model *PersistedModel) NewTodo(title string) uuid.UUID {
-	id, err := uuid.NewV7()
+func (model *PersistedModel) NewTodo(title string, order *big.Rat) (uuid.UUID, error) {
+	item, err := newPersistedItem(title, order)
 	if err != nil {
-		log.Fatalf("Can't generate UUID: %v", err)
+		return uuid.UUID{}, err
 	}
 
 	if model.Items == nil {
 		model.Items = make(map[uuid.UUID]*PersistedItem)
 	}
-	model.Items[id] = newPersistedItem(title)
+	model.Items[item.ID] = item
 
-	return id
+	return item.ID, nil
 }
 
 func (model *PersistedModel) getItem(id uuid.UUID) *PersistedItem {
@@ -174,14 +158,14 @@ func (model *PersistedModel) DebugString() string {
 
 	builder.WriteString(fmt.Sprintf("Model @%p\n", model))
 	for id, item := range model.Items {
-		builder.WriteString(fmt.Sprintf("%v:\n  %s\n", id, item.DebugString()))
+		builder.WriteString(fmt.Sprintf("%v:\n  %s\n", id, item))
 	}
 
 	return builder.String()
 }
 
-func (model *PersistedModel) Model() Model {
-	return Model{
+func (model *PersistedModel) Model() ItemList {
+	return ItemList{
 		// TODO: deep clone?
 		replicated: *model,
 	}
